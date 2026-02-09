@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PWA Todo</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="app/manifest.json" />
+</head>
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="切换主题">☾</button>
+  <button id="bgm-toggle" class="bgm-toggle" type="button" aria-label="BGM 设置">♪</button>
+  <div class="page-card">
+  <section id="timer-module">
+    <h2>倒计时</h2>
+    <div class="module-card">
+      <div class="timer-row">
+        <div class="timer-display">
+          <div class="timer-ring" id="timer-ring">
+            <span id="timer-remaining">90:00</span>
+          </div>
+        </div>
+      <div class="timer-controls">
+        <label for="timer-minutes">时长（min）</label>
+        <input id="timer-minutes" type="number" inputmode="numeric" min="1" step="1" value="90" />
+        <button id="timer-toggle" type="button">开始</button>
+        <button id="timer-stop" type="button">结束</button>
+      </div>
+        <div id="timer-status" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="date-module">
+    <h2>日期</h2>
+    <div class="date-row">
+      <button id="date-prev" type="button">前一天</button>
+      <input id="date-picker" type="date" aria-label="选择日期" />
+      <span id="date-weekday"></span>
+      <button id="date-next" type="button">后一天</button>
+      <button id="date-reset" type="button">回到今日</button>
+      <button id="sync-btn" type="button">同步</button>
+      <span id="sync-status" class="sync-status">未同步</span>
+    </div>
+  </section>
+
+  <section id="todo-module">
+    <div class="section-header">
+      <h2>待办事项</h2>
+      <button id="recurrence-open" type="button" class="header-action">重复规则</button>
+    </div>
+    <div class="input-row">
+      <input id="todo-input" placeholder="输入待办事项" />
+      <button id="add-btn" type="button">添加</button>
+    </div>
+    <div class="input-row secondary-row">
+      <input id="todo-due" type="number" inputmode="numeric" min="0" step="1" placeholder="预计时长(min)" aria-label="预计时长" />
+    </div>
+    <p id="status" aria-live="polite"></p>
+    <ul id="todo-list"></ul>
+  </section>
+
+  <div id="recurrence-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>重复规则</h3>
+        <button id="recurrence-close" type="button" class="modal-close">关闭</button>
+      </div>
+      <ul id="recurrence-list"></ul>
+      <div class="modal-divider"></div>
+      <div class="modal-form">
+        <input id="recurrence-text" placeholder="输入重复事项内容" />
+        <div class="recurrence-frequency">
+          <select id="recurrence-type">
+            <option value="daily">每天重复</option>
+            <option value="weekly">每周重复</option>
+            <option value="monthly">每月重复</option>
+            <option value="yearly">每年重复</option>
+            <option value="workday">每个工作日重复</option>
+            <option value="custom">自定义重复</option>
+          </select>
+          <div id="recurrence-weekly" class="hidden">
+            <span class="recurrence-label">星期</span>
+            <label><input type="checkbox" value="1" />一</label>
+            <label><input type="checkbox" value="2" />二</label>
+            <label><input type="checkbox" value="3" />三</label>
+            <label><input type="checkbox" value="4" />四</label>
+            <label><input type="checkbox" value="5" />五</label>
+            <label><input type="checkbox" value="6" />六</label>
+            <label><input type="checkbox" value="0" />日</label>
+          </div>
+          <div id="recurrence-monthly" class="hidden">
+            <span class="recurrence-label">日期</span>
+            <select id="recurrence-day"></select>
+          </div>
+          <div id="recurrence-yearly" class="hidden">
+            <span class="recurrence-label">月</span>
+            <select id="recurrence-month"></select>
+            <span class="recurrence-label">日</span>
+            <select id="recurrence-year-day"></select>
+          </div>
+          <div id="recurrence-custom" class="hidden">
+            <select id="recurrence-interval">
+              <option value="1">每 1</option>
+              <option value="2">每 2</option>
+              <option value="3">每 3</option>
+              <option value="4">每 4</option>
+              <option value="5">每 5</option>
+              <option value="6">每 6</option>
+              <option value="7">每 7</option>
+            </select>
+            <select id="recurrence-unit">
+              <option value="day">天</option>
+              <option value="week">周</option>
+              <option value="month">月</option>
+              <option value="year">年</option>
+            </select>
+          </div>
+        </div>
+        <button id="recurrence-add" type="button">新增</button>
+      </div>
+    </div>
+  </div>
+
+  <section id="summary-module">
+    <h2>今日总结</h2>
+    <div id="summary-rating" class="summary-rating" aria-label="今日评分">
+      <button type="button" class="star" data-star="1" aria-label="星级 1"></button>
+      <button type="button" class="star" data-star="2" aria-label="星级 2"></button>
+      <button type="button" class="star" data-star="3" aria-label="星级 3"></button>
+      <button type="button" class="star" data-star="4" aria-label="星级 4"></button>
+      <button type="button" class="star" data-star="5" aria-label="星级 5"></button>
+    </div>
+    <textarea id="summary-input" rows="4" placeholder="记录今天的总结"></textarea>
+    <p id="summary-status" aria-live="polite"></p>
+  </section>
+  <script type="module" src="app/app.js"></script>
+  </div>
+
+  <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>BGM 设置</h3>
+        <button id="bgm-close" type="button" class="modal-close">关闭</button>
+      </div>
+      <div class="bgm-current">
+        当前音乐：<span id="bgm-current-name">默认 BGM</span>
+      </div>
+      <div class="bgm-picker">
+        <input id="bgm-file" type="file" accept="audio/*" />
+      </div>
+      <div class="bgm-volume">
+        <label for="bgm-volume">音量</label>
+        <input id="bgm-volume" type="range" min="0" max="100" value="60" />
+      </div>
+    </div>
+  </div>
+</body>
+</html>
