@@ -525,16 +525,33 @@ section {
   flex-wrap: wrap;
 }
 
+@media (max-width: 520px) {
+  .timer-controls {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    align-items: center;
+    gap: 6px;
+  }
+  #timer-minutes {
+    width: 100%;
+    min-width: 0;
+  }
+  #timer-toggle,
+  #timer-stop {
+    justify-self: start;
+  }
+}
+
 .timer-controls label {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--muted);
 }
 
 #timer-minutes {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  width: 120px;
+  width: clamp(72px, 16vw, 110px);
   background: var(--input);
   color: var(--text);
 }

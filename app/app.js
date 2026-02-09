@@ -268,8 +268,9 @@ addBtn.onclick = async () => {
     dueMinutes = Math.floor(parsed);
   }
   const now = new Date().toISOString();
+  const initResult = syncInitPromise ? await syncInitPromise : null;
   const userId = currentUserId ||
-    (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
+    (initResult && initResult.userId ? initResult.userId : ensureUserId());
   await addTodo({
     date: selectedDate,
     text,
@@ -449,8 +450,9 @@ async function ensureRecurrenceForDate(dateStr) {
   for (const rule of rules) {
     if (!dateMatchesRule(dateStr, rule)) continue;
     if (existingRuleIds.has(rule.id)) continue;
+    const initResult = syncInitPromise ? await syncInitPromise : null;
     const userId = currentUserId ||
-      (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
+      (initResult && initResult.userId ? initResult.userId : ensureUserId());
     await addTodo({
       date: dateStr,
       text: rule.text,
@@ -703,8 +705,9 @@ async function saveSummaryNow() {
       deletedAt: null
     });
   } else {
+    const initResult = syncInitPromise ? await syncInitPromise : null;
     const userId = currentUserId ||
-      (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
+      (initResult && initResult.userId ? initResult.userId : ensureUserId());
     await addSummary({
       date: selectedDate,
       text,
@@ -964,19 +967,38 @@ if (bgmFileInput) {
 }
 
 function setSyncStatus(text) {
-  if (syncStatus) syncStatus.textContent = text;
+  if (!syncStatus) return;
+  if (text.startsWith('Idle · last ')) {
+    const iso = text.replace('Idle · last ', '');
+    const date = new Date(iso);
+    if (!Number.isNaN(date.getTime())) {
+      const local = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+      const y = local.getUTCFullYear();
+      const m = String(local.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(local.getUTCDate()).padStart(2, '0');
+      const hh = String(local.getUTCHours()).padStart(2, '0');
+      const mm = String(local.getUTCMinutes()).padStart(2, '0');
+      const ss = String(local.getUTCSeconds()).padStart(2, '0');
+      syncStatus.textContent = `上次同步 ${y}-${m}-${d} ${hh}:${mm}:${ss} (UTC+8)`;
+      return;
+    }
+  }
+  syncStatus.textContent = text;
 }
 
-syncInitPromise = initSync({
+const initPromise = initSync({
   onStatus: setSyncStatus,
   onUpdate: updatedDates => {
     if (updatedDates.has(selectedDate)) {
       loadForDate();
     }
   }
-}).then(result => {
+});
+syncInitPromise = initPromise;
+
+initPromise.then(result => {
   syncReady = true;
-  currentUserId = result.userId;
+  currentUserId = result && result.userId ? result.userId : null;
   setTimeout(() => {
     syncNow();
   }, 1200);

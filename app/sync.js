@@ -13,8 +13,8 @@ import {
   updateSummary
 } from './db.js';
 
-const SUPABASE_URL = '';
-const SUPABASE_ANON_KEY = '';
+const SUPABASE_URL = 'https://wjyqimuecbairlbdfetr.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqeXFpbXVlY2JhaXJsYmRmZXRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NDU4MDcsImV4cCI6MjA4NjIyMTgwN30.il1pkrnEjHUnnvWR7PCh10VeSWrC18fv596vSCLQOpE';
 
 let supabase = null;
 let createClientFn = null;
@@ -22,6 +22,7 @@ let userId = null;
 let lastSyncAt = '1970-01-01T00:00:00.000Z';
 let statusHandler = () => {};
 let updateHandler = () => {};
+const DEBUG = true;
 
 function generateUUID() {
   if (crypto && typeof crypto.randomUUID === 'function') {
@@ -40,12 +41,12 @@ export function getUserId() {
 
 function setStatus(state, detail = '') {
   statusHandler(`${state}${detail ? ` · ${detail}` : ''}`);
+  if (DEBUG) console.log('[sync][status]', state, detail);
 }
 
 function mapTodoToRemote(todo) {
   return {
     uuid: todo.uuid,
-    user_id: todo.userId,
     date: todo.date,
     text: todo.text,
     completed: todo.completed,
@@ -58,7 +59,6 @@ function mapTodoToRemote(todo) {
 function mapSummaryToRemote(summary) {
   return {
     uuid: summary.uuid,
-    user_id: summary.userId,
     date: summary.date,
     text: summary.text,
     rating: summary.rating ?? 0,
@@ -71,7 +71,6 @@ function mapSummaryToRemote(summary) {
 function mapTodoFromRemote(row) {
   return {
     uuid: row.uuid,
-    userId: row.user_id,
     date: row.date,
     text: row.text,
     completed: row.completed,
@@ -84,7 +83,6 @@ function mapTodoFromRemote(row) {
 function mapSummaryFromRemote(row) {
   return {
     uuid: row.uuid,
-    userId: row.user_id,
     date: row.date,
     text: row.text,
     rating: row.rating ?? 0,
@@ -102,13 +100,11 @@ async function normalizeLocalData() {
       const next = {
         ...todo,
         uuid: todo.uuid || generateUUID(),
-        userId: todo.userId || userId,
         updatedAt: todo.updatedAt || todo.createdAt || now,
         deletedAt: todo.deletedAt ?? null
       };
       if (
         next.uuid !== todo.uuid ||
-        next.userId !== todo.userId ||
         next.updatedAt !== todo.updatedAt ||
         next.deletedAt !== todo.deletedAt
       ) {
@@ -124,13 +120,11 @@ async function normalizeLocalData() {
       const next = {
         ...summary,
         uuid: summary.uuid || generateUUID(),
-        userId: summary.userId || userId,
         updatedAt: summary.updatedAt || summary.createdAt || now,
         deletedAt: summary.deletedAt ?? null
       };
       if (
         next.uuid !== summary.uuid ||
-        next.userId !== summary.userId ||
         next.updatedAt !== summary.updatedAt ||
         next.deletedAt !== summary.deletedAt
       ) {
@@ -144,13 +138,17 @@ async function normalizeLocalData() {
 export async function initSync({ onStatus, onUpdate } = {}) {
   if (onStatus) statusHandler = onStatus;
   if (onUpdate) updateHandler = onUpdate;
-
-  const userRecord = await getMeta('userId');
-  userId = userRecord && userRecord.value ? userRecord.value : generateUUID();
-  await setMeta('userId', userId);
+  if (DEBUG) console.log('[sync] init start');
 
   const syncRecord = await getMeta('lastSyncAt');
   if (syncRecord && syncRecord.value) lastSyncAt = syncRecord.value;
+  const initRecord = await getMeta('syncInitialized');
+  if (!initRecord || !initRecord.value) {
+    lastSyncAt = '1970-01-01T00:00:00.000Z';
+    await setMeta('lastSyncAt', lastSyncAt);
+    await setMeta('syncInitialized', 'true');
+  }
+  if (DEBUG) console.log('[sync] lastSyncAt', lastSyncAt);
 
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     setStatus('Sync disabled', 'missing config');
@@ -163,34 +161,49 @@ export async function initSync({ onStatus, onUpdate } = {}) {
     return { userId };
   }
   await normalizeLocalData();
-  return { userId };
+  if (DEBUG) console.log('[sync] init done');
+  return { userId: null };
 }
 
 export async function syncNow() {
   if (!supabase) return;
   try {
     setStatus('Syncing');
-    await pushLocalChanges();
+    if (DEBUG) console.log('[sync] push todos');
+    await pushLocalTodos();
+    if (DEBUG) console.log('[sync] push summaries');
+    await pushLocalSummaries();
+    if (DEBUG) console.log('[sync] pull');
     const updatedDates = await pullRemoteChanges();
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
     setStatus('Idle', `last ${lastSyncAt}`);
     if (updatedDates.size) updateHandler(updatedDates);
   } catch (err) {
+    if (DEBUG) console.log('[sync] error', err);
     setStatus('Error');
   }
 }
 
-export async function pushLocalChanges() {
+export async function pushLocalTodos() {
   const todos = await getTodosUpdatedAfter(lastSyncAt);
-  const summaries = await getSummariesUpdatedAfter(lastSyncAt);
+  if (DEBUG) console.log('[sync] todos to push', todos.length);
+  if (!todos.length) return;
   if (todos.length) {
     const payload = todos.map(mapTodoToRemote);
-    await supabase.from('todos').upsert(payload, { onConflict: 'uuid' });
+    const { error } = await supabase.from('todos').upsert(payload, { onConflict: 'uuid' });
+    if (error) throw error;
   }
+}
+
+export async function pushLocalSummaries() {
+  const summaries = await getSummariesUpdatedAfter(lastSyncAt);
+  if (DEBUG) console.log('[sync] summaries to push', summaries.length);
+  if (!summaries.length) return;
   if (summaries.length) {
     const payload = summaries.map(mapSummaryToRemote);
-    await supabase.from('summaries').upsert(payload, { onConflict: 'uuid' });
+    const { error } = await supabase.from('summaries').upsert(payload, { onConflict: 'uuid' });
+    if (error) throw error;
   }
 }
 
@@ -199,8 +212,8 @@ export async function pullRemoteChanges() {
   const { data: todoRows } = await supabase
     .from('todos')
     .select('*')
-    .eq('user_id', userId)
     .gt('updated_at', lastSyncAt);
+  if (DEBUG) console.log('[sync] pull todos', todoRows ? todoRows.length : 0);
   if (Array.isArray(todoRows)) {
     for (const row of todoRows) {
       const remote = mapTodoFromRemote(row);
@@ -220,8 +233,8 @@ export async function pullRemoteChanges() {
   const { data: summaryRows } = await supabase
     .from('summaries')
     .select('*')
-    .eq('user_id', userId)
     .gt('updated_at', lastSyncAt);
+  if (DEBUG) console.log('[sync] pull summaries', summaryRows ? summaryRows.length : 0);
   if (Array.isArray(summaryRows)) {
     for (const row of summaryRows) {
       const remote = mapSummaryFromRemote(row);
@@ -246,10 +259,13 @@ async function getSupabase() {
     if (!createClientFn) {
       const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
       createClientFn = mod.createClient;
+      if (DEBUG) console.log('[sync] sdk loaded');
     }
     supabase = createClientFn(SUPABASE_URL, SUPABASE_ANON_KEY);
+    if (DEBUG) console.log('[sync] client created', SUPABASE_URL);
     return supabase;
   } catch (err) {
+    if (DEBUG) console.log('[sync] sdk load failed', err);
     return null;
   }
 }
