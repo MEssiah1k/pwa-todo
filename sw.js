@@ -1,4 +1,4 @@
-const CACHE_NAME = 'todo-cache-v25';
+const CACHE_NAME = 'todo-cache-v26';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',
@@ -9,7 +9,7 @@ const CORE_ASSETS = [
   './app/sync.js',
   './app/manifest.json',
   './app/bgm.js',
-  './app/icon.svg',
+  './app/icon.svg?v=2',
   './sw.js'
 ];
 
