@@ -6,6 +6,7 @@
   --muted: #6b7280;
   --input: #ffffff;
   --btn: #f8fafc;
+  --todo: #eef2ff;
 }
 
 body.dark {
@@ -18,6 +19,7 @@ body.dark {
   --btn: #33322f;
   --ring: #4caf50;
   --ring-inner: #2b2a27;
+  --todo: #3a4750;
 }
 
 body {
@@ -254,7 +256,7 @@ section {
   margin-bottom: 8px;
   cursor: pointer;
   gap: 12px;
-  background: var(--card);
+  background: var(--todo);
 }
 
 #todo-list li.completed {

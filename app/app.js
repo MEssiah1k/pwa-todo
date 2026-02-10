@@ -86,6 +86,7 @@ function parseDateLocal(dateStr) {
 }
 
 function setSelectedDate(dateStr) {
+  const previousDate = selectedDate;
   selectedDate = dateStr;
   if (datePicker) datePicker.value = dateStr;
   if (dateWeekday) {
@@ -94,7 +95,17 @@ function setSelectedDate(dateStr) {
     dateWeekday.textContent = weekdays[date.getDay()];
   }
   ensureRecurrenceForDate(dateStr);
-  loadForDate();
+  if (previousDate) {
+    const today = formatDateLocal(new Date());
+    const yesterday = formatDateLocal(new Date(Date.now() - 86400000));
+    if (previousDate === yesterday && dateStr === today) {
+      carryOverIncomplete(previousDate, dateStr).then(loadForDate);
+      return;
+    }
+    loadForDate();
+  } else {
+    loadForDate();
+  }
 }
 
 function generateUUID() {
@@ -141,6 +152,42 @@ async function loadTodos() {
   await migrateMissingTodoDates();
   todos = await getTodosByDate(selectedDate);
   renderTodos();
+}
+
+async function carryOverIncomplete(fromDate, toDate) {
+  const fromTodos = await getTodosByDate(fromDate);
+  const toTodos = await getTodosByDate(toDate);
+  const carried = new Set(
+    toTodos
+      .filter(todo => todo.carriedFrom)
+      .map(todo => todo.carriedFrom)
+  );
+  const now = new Date().toISOString();
+
+  for (const todo of fromTodos) {
+    if (todo.deletedAt) continue;
+    if (todo.completed) continue;
+    if (!todo.uuid) {
+      todo.uuid = generateUUID();
+      await updateTodo({ ...todo, updatedAt: now });
+    }
+    if (carried.has(todo.uuid)) continue;
+    const userId = currentUserId ||
+      (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
+    await addTodo({
+      date: toDate,
+      text: todo.text,
+      completed: false,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      dueMinutes: todo.dueMinutes ?? null,
+      recurrenceRuleId: null,
+      carriedFrom: todo.uuid,
+      uuid: generateUUID(),
+      userId
+    });
+  }
 }
 
 function renderTodos() {
@@ -1002,6 +1049,9 @@ initPromise.then(result => {
   setTimeout(() => {
     syncNow();
   }, 1200);
+  setInterval(() => {
+    if (syncReady) syncNow();
+  }, 5 * 60 * 1000);
 });
 
 if (syncBtn) {
@@ -1087,7 +1137,7 @@ restoreTimerState();
 // -------- Service Worker --------
 if ('serviceWorker' in navigator) {
   let swRegistration = null;
-  navigator.serviceWorker.register('../sw.js').then(reg => {
+  navigator.serviceWorker.register('./sw.js').then(reg => {
     swRegistration = reg;
   });
 
