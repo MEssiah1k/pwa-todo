@@ -7,6 +7,10 @@
   --input: #ffffff;
   --btn: #f8fafc;
   --todo: #eef2ff;
+  --todo-active: #fff4c7;
+  --todo-active-border: #f59e0b;
+  --todo-active-glow: rgba(245, 158, 11, 0.26);
+  --todo-running: #92400e;
 }
 
 body.dark {
@@ -20,6 +24,10 @@ body.dark {
   --ring: #4caf50;
   --ring-inner: #2b2a27;
   --todo: #3a4750;
+  --todo-active: #4d452f;
+  --todo-active-border: #fbbf24;
+  --todo-active-glow: rgba(251, 191, 36, 0.22);
+  --todo-running: #fcd34d;
 }
 
 body {
@@ -248,7 +256,7 @@ section {
 
 #todo-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -259,14 +267,36 @@ section {
   background: var(--todo);
 }
 
+#todo-list li.in-progress {
+  background: var(--todo-active);
+  border-color: var(--todo-active-border);
+  box-shadow: 0 0 0 2px var(--todo-active-glow);
+}
+
 #todo-list li.completed {
   text-decoration: line-through;
   opacity: 0.6;
 }
 
+.todo-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .todo-text {
   flex: 1;
   word-break: break-word;
+  min-width: 0;
 }
 
 .todo-due {
@@ -276,17 +306,43 @@ section {
   white-space: nowrap;
 }
 
+.todo-running-time {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--todo-running);
+}
+
+.todo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-btn,
 .delete-btn {
-  margin-left: 12px;
+  margin-left: 0;
   padding: 6px 10px;
   border: none;
   border-radius: 6px;
-  background: #ef4444;
   color: #ffffff;
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.progress-btn {
+  background: #2563eb;
+}
+
+.progress-btn:hover {
+  background: #1d4ed8;
+}
+
+.delete-btn {
+  background: #ef4444;
+  color: #ffffff;
 }
 
 .edit-input {
@@ -302,7 +358,9 @@ section {
 }
 
 #todo-list li:hover .delete-btn,
-#todo-list li:focus-within .delete-btn {
+#todo-list li:hover .progress-btn,
+#todo-list li:focus-within .delete-btn,
+#todo-list li:focus-within .progress-btn {
   opacity: 1;
   pointer-events: auto;
 }

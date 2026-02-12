@@ -5,7 +5,6 @@ import {
   getAllSummaries,
   getTodosUpdatedAfter,
   getSummariesUpdatedAfter,
-  getTodoByUuid,
   getSummaryByUuid,
   addTodo,
   updateTodo,
@@ -73,7 +72,7 @@ function mapTodoFromRemote(row) {
     uuid: row.uuid,
     date: row.date,
     text: row.text,
-    completed: row.completed,
+    completed: Boolean(row.completed),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at || null
@@ -209,6 +208,26 @@ export async function pushLocalSummaries() {
 
 export async function pullRemoteChanges() {
   const updatedDates = new Set();
+  const localTodos = await getAllTodos();
+  const localByUuid = new Map();
+  const localByFingerprint = new Map();
+
+  for (const todo of localTodos) {
+    if (todo && todo.uuid) {
+      const existing = localByUuid.get(todo.uuid);
+      if (!existing || (todo.updatedAt || '') > (existing.updatedAt || '')) {
+        localByUuid.set(todo.uuid, todo);
+      }
+    }
+    if (todo) {
+      const key = getTodoFingerprint(todo);
+      const existingByKey = localByFingerprint.get(key);
+      if (!existingByKey || (todo.updatedAt || '') > (existingByKey.updatedAt || '')) {
+        localByFingerprint.set(key, todo);
+      }
+    }
+  }
+
   const { data: todoRows } = await supabase
     .from('todos')
     .select('*')
@@ -217,14 +236,23 @@ export async function pullRemoteChanges() {
   if (Array.isArray(todoRows)) {
     for (const row of todoRows) {
       const remote = mapTodoFromRemote(row);
-      const local = await getTodoByUuid(remote.uuid);
+      const byUuid = remote.uuid ? localByUuid.get(remote.uuid) : null;
+      const byFingerprint = localByFingerprint.get(getTodoFingerprint(remote)) || null;
+      const local = byUuid || byFingerprint;
+
       if (!local) {
         await addTodo(remote);
+        if (remote.uuid) localByUuid.set(remote.uuid, remote);
+        localByFingerprint.set(getTodoFingerprint(remote), remote);
         updatedDates.add(remote.date);
         continue;
       }
-      if ((remote.updatedAt || '') > (local.updatedAt || '')) {
-        await updateTodo({ ...local, ...remote, id: local.id });
+
+      const merged = mergeTodoForPull(local, remote);
+      if (shouldUpdateTodo(local, merged)) {
+        await updateTodo({ ...local, ...merged, id: local.id });
+        if (merged.uuid) localByUuid.set(merged.uuid, { ...local, ...merged });
+        localByFingerprint.set(getTodoFingerprint(merged), { ...local, ...merged });
         updatedDates.add(remote.date);
       }
     }
@@ -251,6 +279,46 @@ export async function pullRemoteChanges() {
     }
   }
   return updatedDates;
+}
+
+function getTodoFingerprint(todo) {
+  const date = todo && todo.date ? todo.date : '';
+  const text = todo && typeof todo.text === 'string' ? todo.text.trim() : '';
+  const createdAt = todo && todo.createdAt ? todo.createdAt : '';
+  return `${date}__${text}__${createdAt}`;
+}
+
+function mergeTodoForPull(local, remote) {
+  const localUpdatedAt = local.updatedAt || '';
+  const remoteUpdatedAt = remote.updatedAt || '';
+  const remoteNewer = remoteUpdatedAt > localUpdatedAt;
+  const winner = remoteNewer ? remote : local;
+  const merged = {
+    ...winner,
+    id: local.id,
+    uuid: local.uuid || remote.uuid
+  };
+
+  // 冲突时“已完成”优先于“未完成”
+  const completedMerged = Boolean(local.completed) || Boolean(remote.completed);
+  if (merged.completed !== completedMerged) {
+    merged.completed = completedMerged;
+    merged.updatedAt = new Date().toISOString();
+  }
+
+  return merged;
+}
+
+function shouldUpdateTodo(local, next) {
+  return (
+    local.uuid !== next.uuid ||
+    local.date !== next.date ||
+    local.text !== next.text ||
+    Boolean(local.completed) !== Boolean(next.completed) ||
+    (local.createdAt || '') !== (next.createdAt || '') ||
+    (local.updatedAt || '') !== (next.updatedAt || '') ||
+    (local.deletedAt || null) !== (next.deletedAt || null)
+  );
 }
 async function getSupabase() {
   if (supabase) return supabase;

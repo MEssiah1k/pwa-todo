@@ -1,4 +1,4 @@
-const DEFAULT_BGM_SRC = 'assets/bgm/default.mp3';
+const DEFAULT_BGM_SRC = 'assets/bgm/pinknoise.m4a';
 
 let audio = null;
 let objectUrl = null;

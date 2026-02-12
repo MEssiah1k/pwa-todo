@@ -71,6 +71,12 @@ let summaries = [];
 let selectedDate = formatDateLocal(new Date());
 let migrationDone = false;
 let recurrenceRules = [];
+const MAX_IN_PROGRESS_TODOS = 2;
+const IN_PROGRESS_META_KEY = 'todoInProgress';
+let inProgressTodos = new Map();
+let restoreInProgressPromise = null;
+const runningTimeEls = new Map();
+let runningTicker = null;
 
 // -------- Date helpers --------
 function formatDateLocal(date) {
@@ -135,9 +141,9 @@ async function migrateMissingTodoDates() {
   const all = await getAllTodos();
   const now = new Date().toISOString();
   const today = formatDateLocal(new Date());
+  const missingDateTodos = all.filter(todo => !todo.date);
   await Promise.all(
-    all
-      .filter(todo => !todo.date)
+    missingDateTodos
       .map(todo =>
         updateTodo({
           ...todo,
@@ -146,10 +152,13 @@ async function migrateMissingTodoDates() {
         })
       )
   );
+  if (missingDateTodos.length) triggerChangeSync();
 }
 
 async function loadTodos() {
+  if (restoreInProgressPromise) await restoreInProgressPromise;
   await migrateMissingTodoDates();
+  await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
   renderTodos();
 }
@@ -163,6 +172,7 @@ async function carryOverIncomplete(fromDate, toDate) {
       .map(todo => todo.carriedFrom)
   );
   const now = new Date().toISOString();
+  let hasChanges = false;
 
   for (const todo of fromTodos) {
     if (todo.deletedAt) continue;
@@ -170,6 +180,7 @@ async function carryOverIncomplete(fromDate, toDate) {
     if (!todo.uuid) {
       todo.uuid = generateUUID();
       await updateTodo({ ...todo, updatedAt: now });
+      hasChanges = true;
     }
     if (carried.has(todo.uuid)) continue;
     const userId = currentUserId ||
@@ -187,11 +198,14 @@ async function carryOverIncomplete(fromDate, toDate) {
       uuid: generateUUID(),
       userId
     });
+    hasChanges = true;
   }
+  if (hasChanges) triggerChangeSync();
 }
 
 function renderTodos() {
   list.innerHTML = '';
+  runningTimeEls.clear();
   const visibleTodos = todos
     .filter(todo => !todo.deletedAt)
     .sort((a, b) => {
@@ -204,15 +218,21 @@ function renderTodos() {
   visibleTodos.forEach(todo => {
     const li = document.createElement('li');
     li.className = todo.completed ? 'completed' : '';
+    if (isTodoInProgress(todo)) li.classList.add('in-progress');
     li.dataset.id = String(todo.id);
 
+    const content = document.createElement('div');
+    content.className = 'todo-content';
+    const mainRow = document.createElement('div');
+    mainRow.className = 'todo-main';
     const text = document.createElement('span');
     text.className = 'todo-text';
     text.textContent = todo.text;
     text.ondblclick = event => {
       event.stopPropagation();
-      beginTodoEdit(todo, li, text);
+      beginTodoEdit(todo, li, mainRow, text);
     };
+    mainRow.appendChild(text);
 
     const del = document.createElement('button');
     del.className = 'delete-btn';
@@ -226,39 +246,183 @@ function renderTodos() {
         deletedAt: now,
         updatedAt: now
       });
+      await clearTodoInProgress(todo.uuid);
+      triggerChangeSync();
       loadTodos();
     };
 
-    li.appendChild(text);
     if (Number.isFinite(todo.dueMinutes)) {
       const due = document.createElement('span');
       due.className = 'todo-due';
       due.textContent = `预计 ${todo.dueMinutes} min`;
-      li.appendChild(due);
+      mainRow.appendChild(due);
     }
-    li.appendChild(del);
+    content.appendChild(mainRow);
+
+    if (isTodoInProgress(todo) && todo.uuid) {
+      const runningTime = document.createElement('div');
+      runningTime.className = 'todo-running-time';
+      runningTimeEls.set(todo.uuid, runningTime);
+      updateRunningTimeEl(todo.uuid, runningTime);
+      content.appendChild(runningTime);
+    }
+
+    const progressBtn = document.createElement('button');
+    progressBtn.className = 'progress-btn';
+    progressBtn.type = 'button';
+    progressBtn.textContent = isTodoInProgress(todo) ? '停止' : '进行';
+    progressBtn.onclick = async event => {
+      event.stopPropagation();
+      const changed = await toggleTodoInProgress(todo);
+      if (changed) loadTodos();
+    };
+
+    const actions = document.createElement('div');
+    actions.className = 'todo-actions';
+    actions.appendChild(progressBtn);
+    actions.appendChild(del);
+    li.appendChild(content);
+    li.appendChild(actions);
     li.onclick = async event => {
       if (event.detail > 1) return;
       if (li.classList.contains('editing')) return;
+      const nextCompleted = !todo.completed;
       await updateTodo({
         ...todo,
-        completed: !todo.completed,
+        completed: nextCompleted,
         updatedAt: new Date().toISOString()
       });
+      if (nextCompleted) await clearTodoInProgress(todo.uuid);
+      triggerChangeSync();
       loadTodos();
     };
     list.appendChild(li);
   });
 }
 
-function beginTodoEdit(todo, li, textNode) {
+function isTodoInProgress(todo) {
+  return Boolean(todo && todo.uuid && inProgressTodos.has(todo.uuid));
+}
+
+function formatElapsed(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSec % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function updateRunningTimeEl(uuid, el) {
+  const startAt = inProgressTodos.get(uuid);
+  if (!startAt) {
+    el.textContent = '进行中 00:00:00';
+    return;
+  }
+  el.textContent = `进行中 ${formatElapsed(Date.now() - startAt)}`;
+}
+
+function tickRunningTimes() {
+  for (const [uuid, el] of runningTimeEls.entries()) {
+    if (!el.isConnected) {
+      runningTimeEls.delete(uuid);
+      continue;
+    }
+    updateRunningTimeEl(uuid, el);
+  }
+}
+
+function ensureRunningTicker() {
+  if (runningTicker) return;
+  runningTicker = setInterval(tickRunningTimes, 1000);
+}
+
+async function persistInProgressTodos() {
+  const payload = Array.from(inProgressTodos.entries())
+    .slice(0, MAX_IN_PROGRESS_TODOS)
+    .map(([uuid, startAt]) => ({ uuid, startAt }));
+  await setMeta(IN_PROGRESS_META_KEY, payload);
+}
+
+async function restoreInProgressTodos() {
+  const record = await getMeta(IN_PROGRESS_META_KEY);
+  const value = record && Array.isArray(record.value) ? record.value : [];
+  const next = new Map();
+  const now = Date.now();
+  for (const item of value) {
+    if (!item || typeof item.uuid !== 'string') continue;
+    if (next.size >= MAX_IN_PROGRESS_TODOS) break;
+    const startAt = Number(item.startAt);
+    next.set(item.uuid, Number.isFinite(startAt) && startAt > 0 ? startAt : now);
+  }
+  inProgressTodos = next;
+}
+
+async function pruneInProgressTodos() {
+  if (!inProgressTodos.size) return;
+  const all = await getAllTodos();
+  const valid = new Set(
+    all
+      .filter(todo => !todo.deletedAt && !todo.completed && todo.uuid)
+      .map(todo => todo.uuid)
+  );
+  let changed = false;
+  for (const uuid of Array.from(inProgressTodos.keys())) {
+    if (valid.has(uuid)) continue;
+    inProgressTodos.delete(uuid);
+    changed = true;
+  }
+  if (inProgressTodos.size > MAX_IN_PROGRESS_TODOS) {
+    const kept = Array.from(inProgressTodos.entries())
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, MAX_IN_PROGRESS_TODOS);
+    const keepSet = new Set(kept.map(([uuid]) => uuid));
+    for (const uuid of Array.from(inProgressTodos.keys())) {
+      if (keepSet.has(uuid)) continue;
+      inProgressTodos.delete(uuid);
+      changed = true;
+    }
+  }
+  if (changed) await persistInProgressTodos();
+}
+
+async function clearTodoInProgress(uuid) {
+  if (!uuid || !inProgressTodos.has(uuid)) return false;
+  inProgressTodos.delete(uuid);
+  await persistInProgressTodos();
+  return true;
+}
+
+async function toggleTodoInProgress(todo) {
+  if (!todo || !todo.uuid) {
+    setStatus('任务缺少标识，无法设为进行中');
+    return false;
+  }
+  if (todo.completed || todo.deletedAt) {
+    setStatus('已完成或已删除任务不能设为进行中');
+    return false;
+  }
+  if (inProgressTodos.has(todo.uuid)) {
+    inProgressTodos.delete(todo.uuid);
+    await persistInProgressTodos();
+    return true;
+  }
+  if (inProgressTodos.size >= MAX_IN_PROGRESS_TODOS) {
+    setStatus('最多同时进行 2 个任务');
+    return false;
+  }
+  inProgressTodos.set(todo.uuid, Date.now());
+  await persistInProgressTodos();
+  return true;
+}
+
+function beginTodoEdit(todo, li, textContainer, textNode) {
   if (li.classList.contains('editing')) return;
   li.classList.add('editing');
   const inputEdit = document.createElement('input');
   inputEdit.className = 'edit-input';
   inputEdit.type = 'text';
   inputEdit.value = todo.text;
-  li.replaceChild(inputEdit, textNode);
+  textContainer.replaceChild(inputEdit, textNode);
   inputEdit.focus();
   inputEdit.setSelectionRange(inputEdit.value.length, inputEdit.value.length);
 
@@ -277,6 +441,7 @@ function beginTodoEdit(todo, li, textNode) {
         text: nextText,
         updatedAt: new Date().toISOString()
       });
+      triggerChangeSync();
     }
     loadTodos();
   };
@@ -329,6 +494,7 @@ addBtn.onclick = async () => {
     uuid: generateUUID(),
     userId
   });
+  triggerChangeSync();
   input.value = '';
   if (dueInput) dueInput.value = '';
   setStatus('');
@@ -396,6 +562,7 @@ function renderRecurrenceRules() {
           })
         )
       );
+      triggerChangeSync();
       loadRecurrenceRules();
     };
 
@@ -494,6 +661,7 @@ async function ensureRecurrenceForDate(dateStr) {
       .map(todo => todo.recurrenceRuleId)
   );
   const now = new Date().toISOString();
+  let hasChanges = false;
   for (const rule of rules) {
     if (!dateMatchesRule(dateStr, rule)) continue;
     if (existingRuleIds.has(rule.id)) continue;
@@ -512,7 +680,9 @@ async function ensureRecurrenceForDate(dateStr) {
       uuid: generateUUID(),
       userId
     });
+    hasChanges = true;
   }
+  if (hasChanges) triggerChangeSync();
 }
 
 function toggleRecurrenceCustom() {
@@ -567,6 +737,7 @@ if (recurrenceAddBtn) {
       updatedAt: now
     };
     await addRecurrenceRule(rule);
+    triggerChangeSync();
     recurrenceText.value = '';
     if (recurrenceWeekly) {
       recurrenceWeekly.querySelectorAll('input[type=\"checkbox\"]').forEach(el => {
@@ -678,10 +849,41 @@ buildRecurrenceDateOptions();
 let summarySaveTimer = null;
 let themeDark = false;
 let summaryRatingValue = 0;
-let bgmName = '默认 BGM';
+let bgmName = 'pinknoise';
 let syncReady = false;
 let currentUserId = null;
 let syncInitPromise = null;
+let pendingChangeSync = false;
+let changeSyncInFlight = null;
+let changeSyncQueued = false;
+restoreInProgressPromise = restoreInProgressTodos();
+ensureRunningTicker();
+
+function triggerChangeSync() {
+  pendingChangeSync = true;
+  void flushChangeSync();
+}
+
+async function flushChangeSync() {
+  if (!pendingChangeSync || !syncReady) return;
+  if (changeSyncInFlight) {
+    changeSyncQueued = true;
+    return;
+  }
+  pendingChangeSync = false;
+  changeSyncInFlight = (async () => {
+    try {
+      await syncNow();
+    } finally {
+      changeSyncInFlight = null;
+      if (changeSyncQueued || pendingChangeSync) {
+        changeSyncQueued = false;
+        void flushChangeSync();
+      }
+    }
+  })();
+  await changeSyncInFlight;
+}
 
 function applyTheme() {
   document.body.classList.toggle('dark', themeDark);
@@ -737,6 +939,7 @@ async function saveSummaryNow() {
         deletedAt: now,
         updatedAt: now
       });
+      triggerChangeSync();
       setSummaryStatus('已清空');
       loadSummaries();
     }
@@ -751,6 +954,7 @@ async function saveSummaryNow() {
       updatedAt: now,
       deletedAt: null
     });
+    triggerChangeSync();
   } else {
     const initResult = syncInitPromise ? await syncInitPromise : null;
     const userId = currentUserId ||
@@ -765,6 +969,7 @@ async function saveSummaryNow() {
       uuid: generateUUID(),
       userId
     });
+    triggerChangeSync();
   }
   setSummaryStatus('已保存');
   loadSummaries();
@@ -1046,9 +1251,13 @@ syncInitPromise = initPromise;
 initPromise.then(result => {
   syncReady = true;
   currentUserId = result && result.userId ? result.userId : null;
-  setTimeout(() => {
-    syncNow();
-  }, 1200);
+  if (pendingChangeSync) {
+    void flushChangeSync();
+  } else {
+    setTimeout(() => {
+      syncNow();
+    }, 1200);
+  }
   setInterval(() => {
     if (syncReady) syncNow();
   }, 5 * 60 * 1000);
@@ -1084,7 +1293,12 @@ if (bgmModal) {
 
 function updateToggleLabel() {
   if (!timerToggleBtn) return;
-  timerToggleBtn.textContent = timerRunning ? '暂停' : '开始';
+  if (timerRunning) {
+    timerToggleBtn.textContent = '暂停';
+    return;
+  }
+  const isPaused = timerRemainingMs > 0 && timerRemainingMs < timerDurationMs;
+  timerToggleBtn.textContent = isPaused ? '继续' : '开始';
 }
 
 async function persistTimerState() {
