@@ -543,6 +543,12 @@ section {
   gap: 12px;
 }
 
+.timer-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .timer-display {
   display: flex;
   flex-direction: column;
@@ -654,6 +660,15 @@ section {
   margin-top: 8px;
   color: #374151;
   min-height: 20px;
+}
+
+#timer-version {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  opacity: 0.72;
+  user-select: none;
 }
 
 /* Date module */

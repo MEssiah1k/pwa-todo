@@ -57,6 +57,7 @@ const timerRemainingEl = document.getElementById('timer-remaining');
 const timerRingEl = document.getElementById('timer-ring');
 const timerMinutesInput = document.getElementById('timer-minutes');
 const timerStatusEl = document.getElementById('timer-status');
+const timerVersionEl = document.getElementById('timer-version');
 const timerToggleBtn = document.getElementById('timer-toggle');
 const timerStopBtn = document.getElementById('timer-stop');
 const bgmFileInput = document.getElementById('bgm-file');
@@ -65,6 +66,7 @@ const bgmModal = document.getElementById('bgm-modal');
 const bgmCloseBtn = document.getElementById('bgm-close');
 const bgmCurrentName = document.getElementById('bgm-current-name');
 const bgmVolume = document.getElementById('bgm-volume');
+const APP_VERSION = 'v0.1.0';
 
 let todos = [];
 let summaries = [];
@@ -165,12 +167,6 @@ async function loadTodos() {
 
 async function carryOverIncomplete(fromDate, toDate) {
   const fromTodos = await getTodosByDate(fromDate);
-  const toTodos = await getTodosByDate(toDate);
-  const carried = new Set(
-    toTodos
-      .filter(todo => todo.carriedFrom)
-      .map(todo => todo.carriedFrom)
-  );
   const now = new Date().toISOString();
   let hasChanges = false;
 
@@ -182,7 +178,22 @@ async function carryOverIncomplete(fromDate, toDate) {
       await updateTodo({ ...todo, updatedAt: now });
       hasChanges = true;
     }
-    if (carried.has(todo.uuid)) continue;
+    const latestToTodos = await getTodosByDate(toDate);
+    const hasSameCarrySource = latestToTodos.some(target =>
+      !target.deletedAt && target.carriedFrom === todo.uuid
+    );
+    if (hasSameCarrySource) continue;
+
+    // 兜底去重：兼容旧数据或跨端产生的无 carriedFrom 副本
+    const hasSameFallbackCopy = latestToTodos.some(target =>
+      !target.deletedAt &&
+      !target.recurrenceRuleId &&
+      !target.carriedFrom &&
+      target.text === todo.text &&
+      (target.dueMinutes ?? null) === (todo.dueMinutes ?? null)
+    );
+    if (hasSameFallbackCopy) continue;
+
     const userId = currentUserId ||
       (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
     await addTodo({
@@ -529,7 +540,7 @@ async function loadSummaries() {
 
 // -------- Recurrence rules --------
 async function loadRecurrenceRules() {
-  recurrenceRules = await getAllRecurrenceRules();
+  recurrenceRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
   renderRecurrenceRules();
 }
 
@@ -652,7 +663,7 @@ function dateMatchesRule(dateStr, rule) {
 async function ensureRecurrenceForDate(dateStr) {
   const today = getTodayDateStr();
   if (!isDateOnOrAfter(dateStr, today)) return;
-  const rules = await getAllRecurrenceRules();
+  const rules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
   if (!rules.length) return;
   const todosForDate = await getTodosByDate(dateStr);
   const existingRuleIds = new Set(
@@ -734,7 +745,9 @@ if (recurrenceAddBtn) {
       interval: type === 'custom' ? Number(recurrenceInterval.value) : null,
       unit: type === 'custom' ? recurrenceUnit.value : null,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      deletedAt: null,
+      uuid: generateUUID()
     };
     await addRecurrenceRule(rule);
     triggerChangeSync();
@@ -1197,6 +1210,7 @@ if (timerStopBtn) timerStopBtn.addEventListener('click', stopTimer);
 
 updateTimerUI(timerRemainingMs);
 setTimerStatus('未开始');
+if (timerVersionEl) timerVersionEl.textContent = `版本 ${APP_VERSION}`;
 updateToggleLabel();
 bgm.init();
 if (bgmCurrentName) bgmCurrentName.textContent = bgmName;

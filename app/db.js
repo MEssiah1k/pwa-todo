@@ -1,6 +1,6 @@
 const DB_NAME = 'todo-db';
 const STORE_NAME = 'todos';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const SUMMARY_STORE = 'summaries';
 const META_STORE = 'meta';
 const RECURRENCE_STORE = 'recurrence_rules';
@@ -62,10 +62,20 @@ export function openDB() {
       }
 
       if (!db.objectStoreNames.contains(RECURRENCE_STORE)) {
-        db.createObjectStore(RECURRENCE_STORE, {
+        const recurrenceStore = db.createObjectStore(RECURRENCE_STORE, {
           keyPath: 'id',
           autoIncrement: true
         });
+        recurrenceStore.createIndex('uuid', 'uuid', { unique: false });
+        recurrenceStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+      } else {
+        const recurrenceStore = request.transaction.objectStore(RECURRENCE_STORE);
+        if (!recurrenceStore.indexNames.contains('uuid')) {
+          recurrenceStore.createIndex('uuid', 'uuid', { unique: false });
+        }
+        if (!recurrenceStore.indexNames.contains('updatedAt')) {
+          recurrenceStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
       }
     };
 
@@ -289,6 +299,38 @@ export async function getAllRecurrenceRules() {
   });
 }
 
+export async function getRecurrenceRulesUpdatedAfter(iso) {
+  const db = await openDB();
+  return new Promise(resolve => {
+    const tx = db.transaction(RECURRENCE_STORE, 'readonly');
+    const store = tx.objectStore(RECURRENCE_STORE);
+    const req = store.getAll();
+    req.onsuccess = () =>
+      resolve(req.result.filter(rule => (rule.updatedAt || '') > iso));
+  });
+}
+
+export async function getRecurrenceRuleByUuid(uuid) {
+  const db = await openDB();
+  return new Promise(resolve => {
+    const tx = db.transaction(RECURRENCE_STORE, 'readonly');
+    const store = tx.objectStore(RECURRENCE_STORE);
+    const index = store.index('uuid');
+    const req = index.get(uuid);
+    req.onsuccess = () => resolve(req.result || null);
+  });
+}
+
+export async function getRecurrenceRuleById(id) {
+  const db = await openDB();
+  return new Promise(resolve => {
+    const tx = db.transaction(RECURRENCE_STORE, 'readonly');
+    const store = tx.objectStore(RECURRENCE_STORE);
+    const req = store.get(id);
+    req.onsuccess = () => resolve(req.result || null);
+  });
+}
+
 export async function addRecurrenceRule(rule) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -300,13 +342,23 @@ export async function addRecurrenceRule(rule) {
   });
 }
 
-export async function deleteRecurrenceRule(id) {
+export async function updateRecurrenceRule(rule) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(RECURRENCE_STORE, 'readwrite');
     const store = tx.objectStore(RECURRENCE_STORE);
-    const req = store.delete(id);
-    req.onsuccess = () => resolve(true);
+    const req = store.put(rule);
+    req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteRecurrenceRule(id) {
+  const rule = await getRecurrenceRuleById(id);
+  if (!rule) return false;
+  return updateRecurrenceRule({
+    ...rule,
+    deletedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   });
 }

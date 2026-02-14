@@ -3,13 +3,18 @@ import {
   setMeta,
   getAllTodos,
   getAllSummaries,
+  getAllRecurrenceRules,
   getTodosUpdatedAfter,
   getSummariesUpdatedAfter,
+  getRecurrenceRulesUpdatedAfter,
   getSummaryByUuid,
+  getRecurrenceRuleByUuid,
   addTodo,
   updateTodo,
   addSummary,
-  updateSummary
+  updateSummary,
+  addRecurrenceRule,
+  updateRecurrenceRule
 } from './db.js';
 
 const SUPABASE_URL = 'https://wjyqimuecbairlbdfetr.supabase.co';
@@ -79,6 +84,38 @@ function mapTodoFromRemote(row) {
   };
 }
 
+function mapRecurrenceRuleToRemote(rule) {
+  return {
+    uuid: rule.uuid,
+    text: rule.text,
+    type: rule.type,
+    weekdays: rule.weekdays || null,
+    day: rule.day ?? null,
+    month: rule.month ?? null,
+    interval: rule.interval ?? null,
+    unit: rule.unit ?? null,
+    created_at: rule.createdAt,
+    updated_at: rule.updatedAt,
+    deleted_at: rule.deletedAt ?? null
+  };
+}
+
+function mapRecurrenceRuleFromRemote(row) {
+  return {
+    uuid: row.uuid,
+    text: row.text,
+    type: row.type,
+    weekdays: row.weekdays || null,
+    day: row.day ?? null,
+    month: row.month ?? null,
+    interval: row.interval ?? null,
+    unit: row.unit ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deletedAt: row.deleted_at || null
+  };
+}
+
 function mapSummaryFromRemote(row) {
   return {
     uuid: row.uuid,
@@ -132,6 +169,26 @@ async function normalizeLocalData() {
       return null;
     })
   );
+
+  const rules = await getAllRecurrenceRules();
+  await Promise.all(
+    rules.map(rule => {
+      const next = {
+        ...rule,
+        uuid: rule.uuid || generateUUID(),
+        updatedAt: rule.updatedAt || rule.createdAt || now,
+        deletedAt: rule.deletedAt ?? null
+      };
+      if (
+        next.uuid !== rule.uuid ||
+        next.updatedAt !== rule.updatedAt ||
+        next.deletedAt !== rule.deletedAt
+      ) {
+        return updateRecurrenceRule(next);
+      }
+      return null;
+    })
+  );
 }
 
 export async function initSync({ onStatus, onUpdate } = {}) {
@@ -172,6 +229,8 @@ export async function syncNow() {
     await pushLocalTodos();
     if (DEBUG) console.log('[sync] push summaries');
     await pushLocalSummaries();
+    if (DEBUG) console.log('[sync] push recurrence rules');
+    await pushLocalRecurrenceRules();
     if (DEBUG) console.log('[sync] pull');
     const updatedDates = await pullRemoteChanges();
     lastSyncAt = new Date().toISOString();
@@ -203,6 +262,20 @@ export async function pushLocalSummaries() {
     const payload = summaries.map(mapSummaryToRemote);
     const { error } = await supabase.from('summaries').upsert(payload, { onConflict: 'uuid' });
     if (error) throw error;
+  }
+}
+
+export async function pushLocalRecurrenceRules() {
+  const rules = await getRecurrenceRulesUpdatedAfter(lastSyncAt);
+  if (DEBUG) console.log('[sync] recurrence rules to push', rules.length);
+  if (!rules.length) return;
+  const payload = rules.map(mapRecurrenceRuleToRemote);
+  const { error } = await supabase
+    .from('recurrence_rules')
+    .upsert(payload, { onConflict: 'uuid' });
+  if (error) {
+    if (isMissingRecurrenceTable(error)) return;
+    throw error;
   }
 }
 
@@ -278,6 +351,27 @@ export async function pullRemoteChanges() {
       }
     }
   }
+
+  const { data: ruleRows, error: rulePullError } = await supabase
+    .from('recurrence_rules')
+    .select('*')
+    .gt('updated_at', lastSyncAt);
+  if (rulePullError) {
+    if (!isMissingRecurrenceTable(rulePullError)) throw rulePullError;
+  } else if (Array.isArray(ruleRows)) {
+    if (DEBUG) console.log('[sync] pull recurrence rules', ruleRows.length);
+    for (const row of ruleRows) {
+      const remote = mapRecurrenceRuleFromRemote(row);
+      const local = await getRecurrenceRuleByUuid(remote.uuid);
+      if (!local) {
+        await addRecurrenceRule(remote);
+        continue;
+      }
+      if ((remote.updatedAt || '') > (local.updatedAt || '')) {
+        await updateRecurrenceRule({ ...local, ...remote, id: local.id });
+      }
+    }
+  }
   return updatedDates;
 }
 
@@ -319,6 +413,16 @@ function shouldUpdateTodo(local, next) {
     (local.updatedAt || '') !== (next.updatedAt || '') ||
     (local.deletedAt || null) !== (next.deletedAt || null)
   );
+}
+
+function isMissingRecurrenceTable(error) {
+  const text = String(
+    (error && error.message) ||
+    (error && error.details) ||
+    (error && error.hint) ||
+    ''
+  );
+  return text.includes('recurrence_rules') && text.includes('does not exist');
 }
 async function getSupabase() {
   if (supabase) return supabase;
