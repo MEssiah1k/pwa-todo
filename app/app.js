@@ -18,6 +18,10 @@ import {
 } from './db.js';
 import * as bgm from './bgm.js';
 import {
+  createScopedStorageKey,
+  migrateLegacyLocalStorageKeys
+} from './storage-scope.js';
+import {
   initSync,
   syncNow,
   pushNow,
@@ -145,10 +149,10 @@ const TIMER_TIMELINE_ACTIVE_META_KEY = 'timerTimelineActive';
 const TIMER_TIMELINE_UPDATED_AT_META_KEY = 'timerTimelineUpdatedAt';
 const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt';
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
-const TIMER_STATE_LOCAL_KEY = 'pwaTodo.timerState';
-const TIMER_TIMELINE_LOCAL_KEY = 'pwaTodo.timerTimelineByDate';
-const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = 'pwaTodo.timerTimelineActive';
-const TIMER_LEASE_KEY = 'pwaTodo.timerLease';
+const TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerState');
+const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
+const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
+const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
 const TIMER_LEASE_TTL_MS = 4000;
 const TIMER_LEASE_HEARTBEAT_MS = 2000;
 const REGRET_COIN_LEDGER_META_KEY = 'regretCoinLedger';
@@ -169,7 +173,7 @@ let migrationDone = false;
 let recurrenceRules = [];
 let editingRecurrenceRuleId = null;
 const MAX_IN_PROGRESS_TODOS = 2;
-const IN_PROGRESS_LOCAL_KEY = 'pwaTodo.todoInProgress';
+const IN_PROGRESS_LOCAL_KEY = createScopedStorageKey('pwaTodo.todoInProgress');
 let inProgressTodos = new Map();
 let restoreInProgressPromise = null;
 const runningTimeEls = new Map();
@@ -192,6 +196,14 @@ let contributionHalfKey = '';
 let contributionFollowCurrentHalf = true;
 let contributionLastCurrentHalfKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+migrateLegacyLocalStorageKeys([
+  'pwaTodo.timerState',
+  'pwaTodo.timerTimelineByDate',
+  'pwaTodo.timerTimelineActive',
+  'pwaTodo.timerLease',
+  'pwaTodo.todoInProgress'
+]);
 
 // -------- Date helpers --------
 function formatDateLocal(date) {

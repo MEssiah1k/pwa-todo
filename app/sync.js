@@ -20,6 +20,10 @@ import {
   addRecurrenceRule,
   updateRecurrenceRule
 } from './db.js';
+import {
+  createScopedStorageKey,
+  migrateLegacyLocalStorageKeys
+} from './storage-scope.js';
 
 const SUPABASE_URL = 'https://wjyqimuecbairlbdfetr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqeXFpbXVlY2JhaXJsYmRmZXRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NDU4MDcsImV4cCI6MjA4NjIyMTgwN30.il1pkrnEjHUnnvWR7PCh10VeSWrC18fv596vSCLQOpE';
@@ -36,10 +40,15 @@ const TIMER_TIMELINE_ACTIVE_META_KEY = 'timerTimelineActive';
 const TIMER_TIMELINE_UPDATED_AT_META_KEY = 'timerTimelineUpdatedAt';
 const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt';
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
-const TIMER_TIMELINE_LOCAL_KEY = 'pwaTodo.timerTimelineByDate';
-const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = 'pwaTodo.timerTimelineActive';
+const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
+const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
 const MAX_AUTO_DEDUPE_DELETE_COUNT = 50;
 const MAX_AUTO_DEDUPE_DELETE_RATIO = 0.3;
+
+migrateLegacyLocalStorageKeys([
+  'pwaTodo.timerTimelineByDate',
+  'pwaTodo.timerTimelineActive'
+]);
 
 function getTodayDateStr() {
   const now = new Date();
