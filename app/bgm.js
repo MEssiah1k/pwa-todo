@@ -217,7 +217,6 @@ export function play() {
     if (audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       schedulePlayWhenReady();
       scheduleRecovery();
-      return;
     }
   }
   clearRecoveryTimer();
