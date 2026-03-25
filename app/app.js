@@ -143,7 +143,7 @@ const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
 const regretCoinStatusEl = document.getElementById('regret-coin-status');
 const regretCoinSpendInput = document.getElementById('regret-coin-spend-input');
 const regretCoinSpendBtn = document.getElementById('regret-coin-spend-btn');
-const APP_VERSION = 'v0.1.3';
+const APP_VERSION = 'v0.1.4';
 const RECURRENCE_SKIP_META_KEY = 'recurrenceSkips';
 const CONTRIBUTION_START_YEAR = 2026;
 const TIMER_TIMELINE_META_KEY = 'timerTimelineByDate';
@@ -4197,7 +4197,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-warmup-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-warmup-3', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

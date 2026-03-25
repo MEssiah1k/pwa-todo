@@ -462,7 +462,6 @@ async function playViaHtmlAudio() {
 function unlockPlayback() {
   userInteracted = true;
   pushDebugLog('user.interaction');
-  void warmupHtmlAudio();
   if (shouldBePlaying && playbackState === 'paused') {
     void play();
   }
