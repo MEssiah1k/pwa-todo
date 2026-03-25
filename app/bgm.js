@@ -1,20 +1,20 @@
 const DEFAULT_BGM_SRC = new URL('../assets/bgm/pinknoise.m4a', import.meta.url).href;
-const DEBUG_LOG_LIMIT = 40;
+const DEBUG_LOG_LIMIT = 50;
 
-let audio = null;
-let objectUrl = null;
+let audioContext = null;
+let currentSourceNode = null;
+let currentGainNode = null;
 let userInteracted = false;
-let retryOnNextInteraction = false;
-let volume = 0.6;
-let reloadBeforeNextPlay = false;
 let shouldBePlaying = false;
-let recoveryTimer = null;
-let unlockBound = false;
-let waitingForCanPlay = false;
+let volume = 0.6;
 let playbackState = 'stopped';
+let sourceConfig = { type: 'url', value: DEFAULT_BGM_SRC, label: 'default' };
+let activePlaybackToken = 0;
+
 const stateListeners = new Set();
 const debugListeners = new Set();
 const debugLogs = [];
+const decodedBufferCache = new Map();
 
 function summarizeError(error) {
   if (!error) return '';
@@ -23,48 +23,12 @@ function summarizeError(error) {
   return String(error);
 }
 
-function getMediaErrorInfo() {
-  if (!audio || !audio.error) return null;
-  return {
-    code: audio.error.code,
-    message: audio.error.message || ''
-  };
-}
-
-function getDebugSnapshot() {
-  return {
-    playbackState,
-    userInteracted,
-    retryOnNextInteraction,
-    shouldBePlaying,
-    waitingForCanPlay,
-    reloadBeforeNextPlay,
-    volume,
-    audio: audio
-      ? {
-          src: audio.src || '',
-          currentSrc: audio.currentSrc || '',
-          paused: audio.paused,
-          ended: audio.ended,
-          muted: audio.muted,
-          loop: audio.loop,
-          currentTime: Number.isFinite(audio.currentTime) ? Number(audio.currentTime.toFixed(3)) : 0,
-          readyState: audio.readyState,
-          networkState: audio.networkState,
-          error: getMediaErrorInfo()
-        }
-      : null,
-    logs: [...debugLogs]
-  };
-}
-
-function emitDebug() {
-  const snapshot = getDebugSnapshot();
-  debugListeners.forEach(listener => {
+function emitState() {
+  stateListeners.forEach(listener => {
     try {
-      listener(snapshot);
+      listener(playbackState);
     } catch (err) {
-      // 忽略调试面板渲染错误
+      // ignore
     }
   });
 }
@@ -79,16 +43,6 @@ function pushDebugLog(event, detail = '') {
   emitDebug();
 }
 
-function emitState() {
-  stateListeners.forEach(listener => {
-    try {
-      listener(playbackState);
-    } catch (err) {
-      // Ignore listener errors so audio state updates stay resilient.
-    }
-  });
-}
-
 function setPlaybackState(nextState) {
   if (playbackState === nextState) return;
   playbackState = nextState;
@@ -96,159 +50,132 @@ function setPlaybackState(nextState) {
   emitState();
 }
 
-function clearRecoveryTimer() {
-  if (!recoveryTimer) return;
-  clearTimeout(recoveryTimer);
-  recoveryTimer = null;
-}
-
-function clearWaitingForCanPlay() {
-  waitingForCanPlay = false;
-  emitDebug();
-}
-
-function scheduleRecovery() {
-  if (!audio || !shouldBePlaying || recoveryTimer) return;
-  pushDebugLog('recovery.schedule');
-  recoveryTimer = setTimeout(() => {
-    recoveryTimer = null;
-    if (!audio || !shouldBePlaying) return;
-    reloadBeforeNextPlay = true;
-    pushDebugLog('recovery.run');
-    play();
-  }, 1000);
-}
-
-function ensureAudio() {
-  if (!audio) {
-    audio = new Audio();
-    audio.loop = true;
-    audio.preload = 'auto';
-    audio.volume = volume;
-    pushDebugLog('audio.create', DEFAULT_BGM_SRC);
-    const mediaEvents = ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'play', 'playing', 'pause', 'waiting', 'stalled', 'suspend', 'abort', 'emptied', 'ended', 'error'];
-    mediaEvents.forEach(eventName => {
-      audio.addEventListener(eventName, () => {
-        const errorInfo = getMediaErrorInfo();
-        const detail = [
-          `ready=${audio.readyState}`,
-          `network=${audio.networkState}`,
-          `paused=${audio.paused}`,
-          `ended=${audio.ended}`,
-          errorInfo ? `error=${errorInfo.code}:${errorInfo.message || 'unknown'}` : ''
-        ].filter(Boolean).join(' ');
-        pushDebugLog(`event.${eventName}`, detail);
-      });
-    });
-    audio.addEventListener('play', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('playing');
-    });
-    audio.addEventListener('playing', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('playing');
-    });
-    audio.addEventListener('canplay', clearWaitingForCanPlay);
-    audio.addEventListener('loadeddata', clearWaitingForCanPlay);
-    audio.addEventListener('ended', () => {
-      if (!shouldBePlaying) return;
-      setPlaybackState('paused');
-    });
-    audio.addEventListener('pause', () => {
-      if (!shouldBePlaying) {
-        setPlaybackState('paused');
-        return;
-      }
-      pushDebugLog('pause.ignored-while-should-play');
-    });
-    audio.addEventListener('stalled', () => {
-      if (!shouldBePlaying) return;
-      setPlaybackState('loading');
-    });
-    audio.addEventListener('waiting', () => {
-      if (!shouldBePlaying) return;
-      setPlaybackState('loading');
-    });
-    audio.addEventListener('error', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('emptied', () => {
-      clearWaitingForCanPlay();
-      if (!shouldBePlaying) {
-        setPlaybackState('paused');
-        return;
-      }
-      pushDebugLog('emptied.ignored-while-should-play');
-    });
-    audio.addEventListener('abort', clearWaitingForCanPlay);
-    emitDebug();
-  }
-}
-
-function safePlay() {
-  if (!audio) return;
-  pushDebugLog('play.attempt', `ready=${audio.readyState} network=${audio.networkState} interacted=${userInteracted}`);
-  const playPromise = audio.play();
-  emitDebug();
-  if (playPromise && typeof playPromise.then === 'function') {
-    playPromise.then(() => {
-      pushDebugLog('play.resolved');
-    });
-  }
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(error => {
-      pushDebugLog('play.rejected', summarizeError(error));
-      retryOnNextInteraction = true;
-      if (!userInteracted) {
-        // 刷新恢复后的自动播放常被浏览器拦截，此时不要长期停留在“准备中”。
-        setPlaybackState('paused');
-        return;
-      }
-      if (shouldBePlaying && userInteracted) {
-        reloadBeforeNextPlay = true;
-        scheduleRecovery();
-      }
-    });
-  }
-}
-
-function schedulePlayWhenReady() {
-  if (!audio || waitingForCanPlay) return;
-  waitingForCanPlay = true;
-  pushDebugLog('play.wait', `ready=${audio.readyState} network=${audio.networkState}`);
-  const playWhenReady = () => {
-    waitingForCanPlay = false;
-    pushDebugLog('play.wait.resolved');
-    if (!audio || !shouldBePlaying) return;
-    safePlay();
+function getDebugSnapshot() {
+  return {
+    playbackState,
+    shouldBePlaying,
+    userInteracted,
+    volume,
+    source: {
+      type: sourceConfig.type,
+      label: sourceConfig.label,
+      value: sourceConfig.type === 'url' ? sourceConfig.value : sourceConfig.value?.name || ''
+    },
+    audio: audioContext
+      ? {
+          contextState: audioContext.state,
+          sampleRate: audioContext.sampleRate,
+          hasSourceNode: Boolean(currentSourceNode),
+          hasGainNode: Boolean(currentGainNode)
+        }
+      : null,
+    logs: [...debugLogs]
   };
-  audio.addEventListener('canplay', playWhenReady, { once: true });
-  audio.addEventListener('loadeddata', playWhenReady, { once: true });
+}
+
+function emitDebug() {
+  const snapshot = getDebugSnapshot();
+  debugListeners.forEach(listener => {
+    try {
+      listener(snapshot);
+    } catch (err) {
+      // ignore
+    }
+  });
+}
+
+function ensureAudioContext() {
+  if (audioContext) return audioContext;
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context) {
+    throw new Error('当前浏览器不支持 AudioContext');
+  }
+  audioContext = new Context();
+  pushDebugLog('context.create', `state=${audioContext.state} sampleRate=${audioContext.sampleRate}`);
+  emitDebug();
+  return audioContext;
+}
+
+async function resumeAudioContext() {
+  const context = ensureAudioContext();
+  if (context.state === 'running') return context;
+  pushDebugLog('context.resume.start', context.state);
+  await context.resume();
+  pushDebugLog('context.resume.done', context.state);
+  emitDebug();
+  return context;
+}
+
+function getSourceCacheKey() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) return 'file:unknown';
+    return `file:${file.name}:${file.size}:${file.lastModified}`;
+  }
+  return `url:${sourceConfig.value}`;
+}
+
+async function readSourceArrayBuffer() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) throw new Error('未选择本地音频文件');
+    pushDebugLog('source.file.read', `${file.name} ${file.size} bytes`);
+    return file.arrayBuffer();
+  }
+  pushDebugLog('source.fetch.start', sourceConfig.value);
+  const response = await fetch(sourceConfig.value, { cache: 'no-store' });
+  pushDebugLog('source.fetch.done', `ok=${response.ok} status=${response.status}`);
+  if (!response.ok) {
+    throw new Error(`音频请求失败: ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+async function decodeCurrentSource(context) {
+  const cacheKey = getSourceCacheKey();
+  if (decodedBufferCache.has(cacheKey)) {
+    pushDebugLog('decode.cache.hit', cacheKey);
+    return decodedBufferCache.get(cacheKey);
+  }
+
+  pushDebugLog('decode.start', cacheKey);
+  const arrayBuffer = await readSourceArrayBuffer();
+  const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+  decodedBufferCache.set(cacheKey, audioBuffer);
+  pushDebugLog('decode.done', `duration=${audioBuffer.duration.toFixed(2)}s channels=${audioBuffer.numberOfChannels}`);
+  return audioBuffer;
+}
+
+function stopCurrentPlayback() {
+  if (currentSourceNode) {
+    try {
+      currentSourceNode.stop();
+    } catch (err) {
+      // ignore repeated stop
+    }
+    currentSourceNode.disconnect();
+    currentSourceNode = null;
+  }
+  if (currentGainNode) {
+    currentGainNode.disconnect();
+    currentGainNode = null;
+  }
   emitDebug();
 }
 
 function unlockPlayback() {
   userInteracted = true;
   pushDebugLog('user.interaction');
-  if (retryOnNextInteraction && shouldBePlaying) {
-    retryOnNextInteraction = false;
-    play();
+  if (shouldBePlaying && playbackState !== 'playing') {
+    void play();
   }
 }
 
 export function init() {
-  ensureAudio();
-  if (!audio.src) {
-    audio.src = DEFAULT_BGM_SRC;
-    pushDebugLog('audio.src.default', audio.src);
-  }
+  pushDebugLog('init', DEFAULT_BGM_SRC);
   emitState();
-  audio.load();
-  pushDebugLog('audio.load.init');
-  if (unlockBound) return;
-  unlockBound = true;
+  if (window.__pwaTodoBgmInitBound) return;
+  window.__pwaTodoBgmInitBound = true;
   window.addEventListener('pointerdown', unlockPlayback, { passive: true });
   window.addEventListener('touchend', unlockPlayback, { passive: true });
   window.addEventListener('click', unlockPlayback, { passive: true });
@@ -256,110 +183,105 @@ export function init() {
 }
 
 export function setSource(source) {
-  ensureAudio();
-  if (objectUrl) {
-    URL.revokeObjectURL(objectUrl);
-    objectUrl = null;
-  }
   if (source instanceof File) {
-    objectUrl = URL.createObjectURL(source);
-    audio.src = objectUrl;
-    pushDebugLog('audio.src.file', source.name || 'local-file');
-  } else if (typeof source === 'string') {
-    audio.src = source;
-    pushDebugLog('audio.src.string', source);
+    sourceConfig = {
+      type: 'file',
+      value: source,
+      label: source.name || 'local-file'
+    };
+    pushDebugLog('source.set.file', sourceConfig.label);
+  } else if (typeof source === 'string' && source) {
+    sourceConfig = {
+      type: 'url',
+      value: source,
+      label: source
+    };
+    pushDebugLog('source.set.url', source);
   }
-  reloadBeforeNextPlay = true;
-  emitDebug();
+  stopCurrentPlayback();
+  if (shouldBePlaying) {
+    void play();
+  } else {
+    emitDebug();
+  }
 }
 
 export function setVolume(value) {
-  const next = Math.max(0, Math.min(1, value));
-  volume = next;
-  if (audio) audio.volume = volume;
-  pushDebugLog('audio.volume', String(next));
+  volume = Math.max(0, Math.min(1, value));
+  if (currentGainNode && audioContext) {
+    currentGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+  }
+  pushDebugLog('volume.set', String(volume));
+  emitDebug();
 }
 
 export function getVolume() {
   return volume;
 }
 
-export function play() {
-  ensureAudio();
-  if (!audio.src) {
-    audio.src = DEFAULT_BGM_SRC;
-    pushDebugLog('audio.src.restore', audio.src);
-  }
+export async function play() {
   shouldBePlaying = true;
-  retryOnNextInteraction = true;
-  pushDebugLog('play.call', `ready=${audio.readyState} network=${audio.networkState} paused=${audio.paused}`);
-
-  const alreadyPlaying = (
-    !audio.paused &&
-    !audio.ended &&
-    !audio.error &&
-    audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-  );
-  if (alreadyPlaying) {
-    clearRecoveryTimer();
-    reloadBeforeNextPlay = false;
-    retryOnNextInteraction = false;
-    pushDebugLog('play.skip.already-playing');
-    setPlaybackState('playing');
-    return;
-  }
-
   setPlaybackState('loading');
-  const needsReload = (
-    reloadBeforeNextPlay ||
-    audio.ended ||
-    Boolean(audio.error) ||
-    audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE ||
-    !audio.currentSrc
-  );
-  if (needsReload) {
-    // 只在明确需要时重建媒体请求，避免移动端反复 abort 当前加载。
-    waitingForCanPlay = false;
-    pushDebugLog('audio.load.play');
-    audio.load();
-    reloadBeforeNextPlay = false;
-    if (audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      schedulePlayWhenReady();
+  const playbackToken = ++activePlaybackToken;
+  pushDebugLog('play.call', `token=${playbackToken} interacted=${userInteracted}`);
+
+  try {
+    const context = await resumeAudioContext();
+    const audioBuffer = await decodeCurrentSource(context);
+
+    if (!shouldBePlaying || playbackToken !== activePlaybackToken) {
+      pushDebugLog('play.cancelled', `token=${playbackToken}`);
+      return;
     }
+
+    stopCurrentPlayback();
+
+    const gainNode = context.createGain();
+    gainNode.gain.setValueAtTime(volume, context.currentTime);
+    gainNode.connect(context.destination);
+
+    const sourceNode = context.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.loop = true;
+    sourceNode.connect(gainNode);
+    sourceNode.onended = () => {
+      if (currentSourceNode !== sourceNode) return;
+      pushDebugLog('source.ended');
+      currentSourceNode = null;
+      currentGainNode = null;
+      if (!shouldBePlaying) {
+        setPlaybackState('paused');
+      }
+      emitDebug();
+    };
+
+    currentSourceNode = sourceNode;
+    currentGainNode = gainNode;
+    sourceNode.start(0);
+    pushDebugLog('play.started', `token=${playbackToken}`);
+    setPlaybackState('playing');
+    emitDebug();
+  } catch (error) {
+    pushDebugLog('play.failed', summarizeError(error));
+    setPlaybackState(userInteracted ? 'paused' : 'loading');
+    emitDebug();
   }
-  clearRecoveryTimer();
-  if (!userInteracted) {
-    // Some mobile/PWA environments do not fire pointerdown as expected,
-    // but a direct play attempt inside the click handler can still succeed.
-    pushDebugLog('play.direct.without-interaction-flag');
-    safePlay();
-    return;
-  }
-  retryOnNextInteraction = false;
-  safePlay();
 }
 
 export function pause() {
   shouldBePlaying = false;
-  clearRecoveryTimer();
+  activePlaybackToken += 1;
   pushDebugLog('pause.call');
+  stopCurrentPlayback();
   setPlaybackState('paused');
-  if (audio) audio.pause();
 }
 
 export function stop() {
-  if (!audio) return;
   shouldBePlaying = false;
-  clearRecoveryTimer();
-  waitingForCanPlay = false;
+  activePlaybackToken += 1;
   pushDebugLog('stop.call');
+  stopCurrentPlayback();
   setPlaybackState('stopped');
-  audio.pause();
-  try {
-    audio.currentTime = 0;
-  } catch (err) {
-    // Some browsers can reject seeking before metadata is ready.
-  }
 }
 
 export function getPlaybackState() {
