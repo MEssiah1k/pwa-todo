@@ -14,8 +14,6 @@ let sourceConfig = { type: 'url', value: DEFAULT_BGM_SRC, label: 'default' };
 let activePlaybackToken = 0;
 let inflightPlayPromise = null;
 let forceHtmlAudioFallback = false;
-let htmlAudioWarmed = false;
-let htmlWarmupPromise = null;
 
 const stateListeners = new Set();
 const debugListeners = new Set();
@@ -326,43 +324,6 @@ function ensureHtmlAudio() {
   return htmlAudio;
 }
 
-async function warmupHtmlAudio() {
-  if (!forceHtmlAudioFallback) return;
-  if (htmlAudioWarmed) return;
-  if (htmlWarmupPromise) return htmlWarmupPromise;
-
-  htmlWarmupPromise = (async () => {
-    const audio = ensureHtmlAudio();
-    const nextSrc = resolveSourceUrl();
-    if (audio.src !== nextSrc) {
-      audio.src = nextSrc;
-      pushDebugLog('html.warmup.src', nextSrc);
-    }
-    const previousMuted = audio.muted;
-    audio.muted = true;
-    pushDebugLog('html.warmup.start');
-    try {
-      await audio.play();
-      audio.pause();
-      try {
-        audio.currentTime = 0;
-      } catch (err) {
-        // ignore seek rejection during warmup
-      }
-      htmlAudioWarmed = true;
-      pushDebugLog('html.warmup.done');
-    } catch (error) {
-      pushDebugLog('html.warmup.failed', summarizeError(error));
-    } finally {
-      audio.muted = previousMuted;
-      htmlWarmupPromise = null;
-      emitDebug();
-    }
-  })();
-
-  return htmlWarmupPromise;
-}
-
 function preloadHtmlAudio() {
   if (sourceConfig.type !== 'url') return;
   const audio = ensureHtmlAudio();
@@ -418,7 +379,6 @@ function resolveSourceUrl() {
 
 async function playViaHtmlAudio() {
   const audio = ensureHtmlAudio();
-  await warmupHtmlAudio();
   const nextSrc = resolveSourceUrl();
   if (audio.src !== nextSrc) {
     audio.src = nextSrc;
@@ -443,7 +403,6 @@ function unlockPlayback() {
 export function primePlaybackFromGesture() {
   userInteracted = true;
   pushDebugLog('user.gesture.prime');
-  void warmupHtmlAudio();
 }
 
 export function init() {
@@ -478,7 +437,6 @@ export function setSource(source) {
     };
     pushDebugLog('source.set.url', source);
   }
-  htmlAudioWarmed = false;
   stopCurrentPlayback();
   if (shouldBePlaying) {
     void play();
