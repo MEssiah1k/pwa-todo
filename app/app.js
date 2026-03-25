@@ -3807,6 +3807,7 @@ if (timerMinutesInput) {
 
 if (timerToggleBtn) {
   timerToggleBtn.addEventListener('click', () => {
+    bgm.primePlaybackFromGesture();
     if (timerRunning) pauseTimer();
     else startTimer();
   });
@@ -4196,7 +4197,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-warmup-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-warmup-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

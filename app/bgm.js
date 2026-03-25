@@ -468,6 +468,12 @@ function unlockPlayback() {
   }
 }
 
+export function primePlaybackFromGesture() {
+  userInteracted = true;
+  pushDebugLog('user.gesture.prime');
+  void warmupHtmlAudio();
+}
+
 export function init() {
   pushDebugLog('init', DEFAULT_BGM_SRC);
   if (shouldPreferHtmlAudioByUserAgent()) {
