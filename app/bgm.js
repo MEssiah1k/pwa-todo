@@ -24,7 +24,6 @@ const decodedBufferCache = new Map();
 const pendingDecodeCache = new Map();
 const fetchedArrayBufferCache = new Map();
 const pendingFetchCache = new Map();
-const blobUrlCache = new Map();
 
 function summarizeError(error) {
   if (!error) return '';
@@ -183,12 +182,6 @@ async function readSourceArrayBuffer() {
   try {
     const arrayBuffer = await pendingFetch;
     fetchedArrayBufferCache.set(cacheKey, arrayBuffer.slice(0));
-    if (sourceConfig.type === 'url' && !blobUrlCache.has(cacheKey)) {
-      const blob = new Blob([arrayBuffer.slice(0)]);
-      const blobUrl = URL.createObjectURL(blob);
-      blobUrlCache.set(cacheKey, blobUrl);
-      pushDebugLog('source.blob.ready', cacheKey);
-    }
     return arrayBuffer.slice(0);
   } finally {
     pendingFetchCache.delete(cacheKey);
@@ -382,26 +375,11 @@ function preloadHtmlAudio() {
   pushDebugLog('html.preload.load');
 }
 
-function preloadHtmlAudioWithBlobIfReady() {
-  if (sourceConfig.type !== 'url') return;
-  const cacheKey = getSourceCacheKey();
-  const blobUrl = blobUrlCache.get(cacheKey);
-  if (!blobUrl) return;
-  const audio = ensureHtmlAudio();
-  if (audio.src !== blobUrl) {
-    audio.src = blobUrl;
-    pushDebugLog('html.preload.blob.src', blobUrl);
-  }
-  audio.load();
-  pushDebugLog('html.preload.blob.load');
-}
-
 function preloadDefaultSource() {
   if (sourceConfig.type !== 'url' || sourceConfig.value !== DEFAULT_BGM_SRC) return;
   void readSourceArrayBuffer()
     .then(() => {
       pushDebugLog('preload.fetch.ready');
-      preloadHtmlAudioWithBlobIfReady();
     })
     .catch(error => {
       pushDebugLog('preload.fetch.failed', summarizeError(error));
@@ -434,11 +412,6 @@ function resolveSourceUrl() {
     const file = sourceConfig.value;
     if (!file) throw new Error('未选择本地音频文件');
     return URL.createObjectURL(file);
-  }
-  const cacheKey = getSourceCacheKey();
-  if (blobUrlCache.has(cacheKey)) {
-    pushDebugLog('source.blob.hit', cacheKey);
-    return blobUrlCache.get(cacheKey);
   }
   return sourceConfig.value;
 }

@@ -16,7 +16,7 @@ import {
   deleteRecurrenceRule,
   getTodosByRuleId
 } from './db.js?v=20260325-module-fix-1';
-import * as bgm from './bgm.js?v=20260325-module-fix-1';
+import * as bgm from './bgm.js?v=20260325-htmlaudio-rollback-1';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
@@ -4197,7 +4197,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-module-fix-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-htmlaudio-rollback-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
