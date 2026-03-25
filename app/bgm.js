@@ -116,7 +116,7 @@ function scheduleRecovery() {
     reloadBeforeNextPlay = true;
     pushDebugLog('recovery.run');
     play();
-  }, 200);
+  }, 1000);
 }
 
 function ensureAudio() {
@@ -152,20 +152,18 @@ function ensureAudio() {
     audio.addEventListener('loadeddata', clearWaitingForCanPlay);
     audio.addEventListener('ended', () => {
       if (!shouldBePlaying) return;
-      setPlaybackState('loading');
-      scheduleRecovery();
+      setPlaybackState('paused');
     });
     audio.addEventListener('pause', () => {
       if (!shouldBePlaying) {
         setPlaybackState('paused');
         return;
       }
-      setPlaybackState('loading');
-      scheduleRecovery();
+      pushDebugLog('pause.ignored-while-should-play');
     });
     audio.addEventListener('stalled', () => {
+      if (!shouldBePlaying) return;
       setPlaybackState('loading');
-      scheduleRecovery();
     });
     audio.addEventListener('waiting', () => {
       if (!shouldBePlaying) return;
@@ -178,8 +176,11 @@ function ensureAudio() {
     });
     audio.addEventListener('emptied', () => {
       clearWaitingForCanPlay();
-      setPlaybackState('loading');
-      scheduleRecovery();
+      if (!shouldBePlaying) {
+        setPlaybackState('paused');
+        return;
+      }
+      pushDebugLog('emptied.ignored-while-should-play');
     });
     audio.addEventListener('abort', clearWaitingForCanPlay);
     emitDebug();
@@ -314,17 +315,16 @@ export function play() {
     audio.ended ||
     Boolean(audio.error) ||
     audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE ||
-    audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+    !audio.currentSrc
   );
   if (needsReload) {
-    // Rebuild media state after stop/end/background suspension.
+    // 只在明确需要时重建媒体请求，避免移动端反复 abort 当前加载。
     waitingForCanPlay = false;
     pushDebugLog('audio.load.play');
     audio.load();
     reloadBeforeNextPlay = false;
     if (audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       schedulePlayWhenReady();
-      scheduleRecovery();
     }
   }
   clearRecoveryTimer();
