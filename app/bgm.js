@@ -324,29 +324,8 @@ function ensureHtmlAudio() {
   return htmlAudio;
 }
 
-function preloadHtmlAudio() {
-  if (sourceConfig.type !== 'url') return;
-  const audio = ensureHtmlAudio();
-  const nextSrc = resolveSourceUrl();
-  if (audio.src !== nextSrc) {
-    audio.src = nextSrc;
-    pushDebugLog('html.preload.src', nextSrc);
-  }
-  audio.load();
-  pushDebugLog('html.preload.load');
-}
-
 function preloadDefaultSource() {
-  if (sourceConfig.type !== 'url' || sourceConfig.value !== DEFAULT_BGM_SRC) return;
-  void readSourceArrayBuffer()
-    .then(() => {
-      pushDebugLog('preload.fetch.ready');
-    })
-    .catch(error => {
-      pushDebugLog('preload.fetch.failed', summarizeError(error));
-    });
-  preloadHtmlAudio();
-  preloadDecodedDefaultSource();
+  // 先禁用预加载。移动端 Edge 上提前 load 会让 html audio 卡在 waiting。
 }
 
 function preloadDecodedDefaultSource() {
@@ -414,7 +393,6 @@ export function init() {
   emitState();
   if (window.__pwaTodoBgmInitBound) return;
   window.__pwaTodoBgmInitBound = true;
-  preloadDefaultSource();
   window.addEventListener('pointerdown', unlockPlayback, { passive: true });
   window.addEventListener('touchend', unlockPlayback, { passive: true });
   window.addEventListener('click', unlockPlayback, { passive: true });
