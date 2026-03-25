@@ -1,5 +1,6 @@
 const DEFAULT_BGM_SRC = new URL('../assets/bgm/pinknoise.m4a', import.meta.url).href;
 const DEBUG_LOG_LIMIT = 50;
+const DECODE_TIMEOUT_MS = 8000;
 
 let audioContext = null;
 let currentSourceNode = null;
@@ -140,10 +141,64 @@ async function decodeCurrentSource(context) {
 
   pushDebugLog('decode.start', cacheKey);
   const arrayBuffer = await readSourceArrayBuffer();
-  const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+  const audioBuffer = await decodeArrayBuffer(context, arrayBuffer);
   decodedBufferCache.set(cacheKey, audioBuffer);
   pushDebugLog('decode.done', `duration=${audioBuffer.duration.toFixed(2)}s channels=${audioBuffer.numberOfChannels}`);
   return audioBuffer;
+}
+
+function decodeArrayBuffer(context, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      pushDebugLog('decode.timeout', `${DECODE_TIMEOUT_MS}ms`);
+      reject(new Error(`音频解码超时（${DECODE_TIMEOUT_MS}ms）`));
+    }, DECODE_TIMEOUT_MS);
+
+    const finishResolve = audioBuffer => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(audioBuffer);
+    };
+
+    const finishReject = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(error);
+    };
+
+    try {
+      // 回调式 decodeAudioData 在部分移动浏览器上比 Promise 版稳定。
+      const maybePromise = context.decodeAudioData(
+        arrayBuffer.slice(0),
+        audioBuffer => {
+          pushDebugLog('decode.callback.resolve');
+          finishResolve(audioBuffer);
+        },
+        error => {
+          pushDebugLog('decode.callback.reject', summarizeError(error));
+          finishReject(error || new Error('音频解码失败'));
+        }
+      );
+
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(audioBuffer => {
+          pushDebugLog('decode.promise.resolve');
+          finishResolve(audioBuffer);
+        }).catch(error => {
+          pushDebugLog('decode.promise.reject', summarizeError(error));
+          finishReject(error);
+        });
+      }
+    } catch (error) {
+      pushDebugLog('decode.throw', summarizeError(error));
+      finishReject(error);
+    }
+  });
 }
 
 function stopCurrentPlayback() {
