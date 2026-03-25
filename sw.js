@@ -1,18 +1,18 @@
-const CACHE_NAME = 'todo-cache-v58';
+const CACHE_NAME = 'todo-cache-v59';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=20260325-bgm-copy-log-2',
-  './app/app.js?v=20260325-bgm-copy-log-2',
-  './app/db.js?v=20260325-bgm-copy-log-2',
-  './app/sync.js?v=20260325-bgm-copy-log-2',
-  './app/storage-scope.js?v=20260325-bgm-copy-log-2',
-  './app/manifest.json?v=20260325-bgm-copy-log-2',
-  './app/bgm.js?v=20260325-bgm-copy-log-2',
+  './style.css?v=20260325-bgm-fallback-1',
+  './app/app.js?v=20260325-bgm-fallback-1',
+  './app/db.js?v=20260325-bgm-fallback-1',
+  './app/sync.js?v=20260325-bgm-fallback-1',
+  './app/storage-scope.js?v=20260325-bgm-fallback-1',
+  './app/manifest.json?v=20260325-bgm-fallback-1',
+  './app/bgm.js?v=20260325-bgm-fallback-1',
   './assets/bgm/pinknoise.m4a',
   './app/icon.svg?v=2',
-  './sw.js?v=20260325-bgm-copy-log-2'
+  './sw.js?v=20260325-bgm-fallback-1'
 ];
 
 self.addEventListener('install', event => {

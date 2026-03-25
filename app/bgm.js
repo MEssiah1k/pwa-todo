@@ -5,6 +5,7 @@ const DECODE_TIMEOUT_MS = 8000;
 let audioContext = null;
 let currentSourceNode = null;
 let currentGainNode = null;
+let htmlAudio = null;
 let userInteracted = false;
 let shouldBePlaying = false;
 let volume = 0.6;
@@ -12,6 +13,7 @@ let playbackState = 'stopped';
 let sourceConfig = { type: 'url', value: DEFAULT_BGM_SRC, label: 'default' };
 let activePlaybackToken = 0;
 let inflightPlayPromise = null;
+let forceHtmlAudioFallback = false;
 
 const stateListeners = new Set();
 const debugListeners = new Set();
@@ -72,6 +74,16 @@ function getDebugSnapshot() {
           hasGainNode: Boolean(currentGainNode)
         }
       : null,
+    htmlAudio: htmlAudio
+      ? {
+          src: htmlAudio.currentSrc || htmlAudio.src || '',
+          paused: htmlAudio.paused,
+          ended: htmlAudio.ended,
+          readyState: htmlAudio.readyState,
+          networkState: htmlAudio.networkState
+        }
+      : null,
+    mode: forceHtmlAudioFallback ? 'html-audio' : 'web-audio',
     logs: [...debugLogs]
   };
 }
@@ -230,6 +242,69 @@ function stopCurrentPlayback() {
     currentGainNode.disconnect();
     currentGainNode = null;
   }
+  if (htmlAudio) {
+    htmlAudio.pause();
+    try {
+      htmlAudio.currentTime = 0;
+    } catch (err) {
+      // ignore
+    }
+  }
+  emitDebug();
+}
+
+function ensureHtmlAudio() {
+  if (htmlAudio) return htmlAudio;
+  htmlAudio = new Audio();
+  htmlAudio.loop = true;
+  htmlAudio.preload = 'auto';
+  htmlAudio.volume = volume;
+  htmlAudio.addEventListener('playing', () => {
+    pushDebugLog('html.playing');
+    setPlaybackState('playing');
+    emitDebug();
+  });
+  htmlAudio.addEventListener('pause', () => {
+    pushDebugLog('html.pause');
+    if (!shouldBePlaying) {
+      setPlaybackState('paused');
+    }
+    emitDebug();
+  });
+  htmlAudio.addEventListener('waiting', () => {
+    pushDebugLog('html.waiting');
+    if (shouldBePlaying) setPlaybackState('loading');
+    emitDebug();
+  });
+  htmlAudio.addEventListener('error', () => {
+    pushDebugLog('html.error');
+    if (shouldBePlaying) setPlaybackState('paused');
+    emitDebug();
+  });
+  return htmlAudio;
+}
+
+function resolveSourceUrl() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) throw new Error('未选择本地音频文件');
+    return URL.createObjectURL(file);
+  }
+  return sourceConfig.value;
+}
+
+async function playViaHtmlAudio() {
+  const audio = ensureHtmlAudio();
+  const nextSrc = resolveSourceUrl();
+  if (audio.src !== nextSrc) {
+    audio.src = nextSrc;
+    pushDebugLog('html.src.set', nextSrc);
+  }
+  audio.volume = volume;
+  pushDebugLog('html.play.call');
+  await audio.play();
+  pushDebugLog('html.play.started');
+  setPlaybackState('playing');
   emitDebug();
 }
 
@@ -281,6 +356,9 @@ export function setVolume(value) {
   if (currentGainNode && audioContext) {
     currentGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
   }
+  if (htmlAudio) {
+    htmlAudio.volume = volume;
+  }
   pushDebugLog('volume.set', String(volume));
   emitDebug();
 }
@@ -301,6 +379,10 @@ export async function play() {
   pushDebugLog('play.call', `token=${playbackToken} interacted=${userInteracted}`);
   inflightPlayPromise = (async () => {
     try {
+      if (forceHtmlAudioFallback) {
+        await playViaHtmlAudio();
+        return;
+      }
       const context = await resumeAudioContext();
       const audioBuffer = await decodeCurrentSource(context);
 
@@ -338,6 +420,16 @@ export async function play() {
       emitDebug();
     } catch (error) {
       pushDebugLog('play.failed', summarizeError(error));
+      if (!forceHtmlAudioFallback && /解码超时/.test(summarizeError(error))) {
+        forceHtmlAudioFallback = true;
+        pushDebugLog('fallback.enable', 'html-audio');
+        try {
+          await playViaHtmlAudio();
+          return;
+        } catch (fallbackError) {
+          pushDebugLog('fallback.failed', summarizeError(fallbackError));
+        }
+      }
       setPlaybackState(userInteracted ? 'paused' : 'loading');
       emitDebug();
     } finally {

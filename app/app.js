@@ -2733,11 +2733,13 @@ function renderBgmStatus(state) {
 function renderBgmDebug(snapshot) {
   if (!bgmDebugEl || !snapshot) return;
   const audioInfo = snapshot.audio || {};
+  const htmlAudioInfo = snapshot.htmlAudio || {};
   const lines = [
     `state=${snapshot.playbackState} shouldPlay=${snapshot.shouldBePlaying} interacted=${snapshot.userInteracted}`,
-    `sourceType=${snapshot.source?.type || '-'} source=${snapshot.source?.value || '-'}`,
+    `mode=${snapshot.mode || '-'} sourceType=${snapshot.source?.type || '-'} source=${snapshot.source?.value || '-'}`,
     `contextState=${audioInfo.contextState || '-'} sampleRate=${audioInfo.sampleRate || '-'} volume=${snapshot.volume}`,
     `hasSourceNode=${audioInfo.hasSourceNode} hasGainNode=${audioInfo.hasGainNode}`,
+    `htmlPaused=${htmlAudioInfo.paused} htmlEnded=${htmlAudioInfo.ended} htmlReady=${htmlAudioInfo.readyState} htmlNetwork=${htmlAudioInfo.networkState}`,
     '',
     ...snapshot.logs
   ];
@@ -4194,7 +4196,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-copy-log-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-fallback-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
