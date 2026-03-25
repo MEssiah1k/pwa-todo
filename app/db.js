@@ -1,4 +1,4 @@
-import { createScopedDbName } from './storage-scope.js';
+import { createScopedDbName } from './storage-scope.js?v=20260325-module-fix-1';
 
 const DB_NAME = 'todo-db';
 const STORE_NAME = 'todos';

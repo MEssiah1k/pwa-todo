@@ -19,11 +19,11 @@ import {
   updateSummary,
   addRecurrenceRule,
   updateRecurrenceRule
-} from './db.js';
+} from './db.js?v=20260325-module-fix-1';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
-} from './storage-scope.js';
+} from './storage-scope.js?v=20260325-module-fix-1';
 
 const SUPABASE_URL = 'https://wjyqimuecbairlbdfetr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqeXFpbXVlY2JhaXJsYmRmZXRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NDU4MDcsImV4cCI6MjA4NjIyMTgwN30.il1pkrnEjHUnnvWR7PCh10VeSWrC18fv596vSCLQOpE';

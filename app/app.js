@@ -15,12 +15,12 @@ import {
   updateRecurrenceRule,
   deleteRecurrenceRule,
   getTodosByRuleId
-} from './db.js';
-import * as bgm from './bgm.js';
+} from './db.js?v=20260325-module-fix-1';
+import * as bgm from './bgm.js?v=20260325-module-fix-1';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
-} from './storage-scope.js';
+} from './storage-scope.js?v=20260325-module-fix-1';
 import {
   initSync,
   syncNow,
@@ -32,7 +32,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js';
+} from './sync.js?v=20260325-module-fix-1';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -143,7 +143,7 @@ const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
 const regretCoinStatusEl = document.getElementById('regret-coin-status');
 const regretCoinSpendInput = document.getElementById('regret-coin-spend-input');
 const regretCoinSpendBtn = document.getElementById('regret-coin-spend-btn');
-const APP_VERSION = 'v0.1.4';
+const APP_VERSION = 'v0.1.5';
 const RECURRENCE_SKIP_META_KEY = 'recurrenceSkips';
 const CONTRIBUTION_START_YEAR = 2026;
 const TIMER_TIMELINE_META_KEY = 'timerTimelineByDate';
@@ -4197,7 +4197,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-warmup-3', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-module-fix-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
