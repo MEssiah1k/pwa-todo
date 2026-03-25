@@ -28,6 +28,17 @@ function summarizeError(error) {
   return String(error);
 }
 
+function shouldFallbackToHtmlAudio(error) {
+  const message = summarizeError(error).toLowerCase();
+  return (
+    message.includes('unable to decode audio data') ||
+    message.includes('decode') ||
+    message.includes('解码') ||
+    message.includes('encoding') ||
+    message.includes('media')
+  );
+}
+
 function emitState() {
   stateListeners.forEach(listener => {
     try {
@@ -420,7 +431,7 @@ export async function play() {
       emitDebug();
     } catch (error) {
       pushDebugLog('play.failed', summarizeError(error));
-      if (!forceHtmlAudioFallback && /解码超时/.test(summarizeError(error))) {
+      if (!forceHtmlAudioFallback && shouldFallbackToHtmlAudio(error)) {
         forceHtmlAudioFallback = true;
         pushDebugLog('fallback.enable', 'html-audio');
         try {
