@@ -136,6 +136,7 @@ const bgmModal = document.getElementById('bgm-modal');
 const bgmCloseBtn = document.getElementById('bgm-close');
 const bgmCurrentName = document.getElementById('bgm-current-name');
 const bgmVolume = document.getElementById('bgm-volume');
+const bgmDebugEl = document.getElementById('bgm-debug');
 const alarmVolume = document.getElementById('alarm-volume');
 const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
 const regretCoinStatusEl = document.getElementById('regret-coin-status');
@@ -2728,6 +2729,26 @@ function renderBgmStatus(state) {
   bgmStatusEl.textContent = `BGM：${labels[state] || '未播放'}`;
 }
 
+function renderBgmDebug(snapshot) {
+  if (!bgmDebugEl || !snapshot) return;
+  const audioInfo = snapshot.audio || {};
+  const errorInfo = audioInfo.error
+    ? `${audioInfo.error.code}${audioInfo.error.message ? ` ${audioInfo.error.message}` : ''}`
+    : 'none';
+  const lines = [
+    `state=${snapshot.playbackState} shouldPlay=${snapshot.shouldBePlaying} interacted=${snapshot.userInteracted}`,
+    `waiting=${snapshot.waitingForCanPlay} retry=${snapshot.retryOnNextInteraction} reload=${snapshot.reloadBeforeNextPlay}`,
+    `src=${audioInfo.src || '-'}`,
+    `currentSrc=${audioInfo.currentSrc || '-'}`,
+    `paused=${audioInfo.paused} ended=${audioInfo.ended} muted=${audioInfo.muted} loop=${audioInfo.loop}`,
+    `readyState=${audioInfo.readyState} networkState=${audioInfo.networkState} time=${audioInfo.currentTime} volume=${snapshot.volume}`,
+    `error=${errorInfo}`,
+    '',
+    ...snapshot.logs
+  ];
+  bgmDebugEl.textContent = lines.join('\n');
+}
+
 function triggerChangeSync() {
   pendingChangeSync = true;
   void flushChangeSync();
@@ -3766,6 +3787,7 @@ updateToggleLabel();
 bgm.init();
 renderBgmStatus(bgm.getPlaybackState());
 bgm.subscribePlaybackState(renderBgmStatus);
+bgm.subscribeDebug(renderBgmDebug);
 ensureTimerLeaseLoop();
 window.addEventListener('storage', event => {
   if (event.key !== TIMER_LEASE_KEY) return;
@@ -4107,7 +4129,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260321-daily-settlement', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-debug', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
