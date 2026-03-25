@@ -4196,7 +4196,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-fallback-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-preload-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
