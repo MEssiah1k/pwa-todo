@@ -11,11 +11,13 @@ let volume = 0.6;
 let playbackState = 'stopped';
 let sourceConfig = { type: 'url', value: DEFAULT_BGM_SRC, label: 'default' };
 let activePlaybackToken = 0;
+let inflightPlayPromise = null;
 
 const stateListeners = new Set();
 const debugListeners = new Set();
 const debugLogs = [];
 const decodedBufferCache = new Map();
+const pendingDecodeCache = new Map();
 
 function summarizeError(error) {
   if (!error) return '';
@@ -138,13 +140,26 @@ async function decodeCurrentSource(context) {
     pushDebugLog('decode.cache.hit', cacheKey);
     return decodedBufferCache.get(cacheKey);
   }
+  if (pendingDecodeCache.has(cacheKey)) {
+    pushDebugLog('decode.pending.hit', cacheKey);
+    return pendingDecodeCache.get(cacheKey);
+  }
 
-  pushDebugLog('decode.start', cacheKey);
-  const arrayBuffer = await readSourceArrayBuffer();
-  const audioBuffer = await decodeArrayBuffer(context, arrayBuffer);
-  decodedBufferCache.set(cacheKey, audioBuffer);
-  pushDebugLog('decode.done', `duration=${audioBuffer.duration.toFixed(2)}s channels=${audioBuffer.numberOfChannels}`);
-  return audioBuffer;
+  const pendingDecode = (async () => {
+    pushDebugLog('decode.start', cacheKey);
+    const arrayBuffer = await readSourceArrayBuffer();
+    const audioBuffer = await decodeArrayBuffer(context, arrayBuffer);
+    decodedBufferCache.set(cacheKey, audioBuffer);
+    pushDebugLog('decode.done', `duration=${audioBuffer.duration.toFixed(2)}s channels=${audioBuffer.numberOfChannels}`);
+    return audioBuffer;
+  })();
+
+  pendingDecodeCache.set(cacheKey, pendingDecode);
+  try {
+    return await pendingDecode;
+  } finally {
+    pendingDecodeCache.delete(cacheKey);
+  }
 }
 
 function decodeArrayBuffer(context, arrayBuffer) {
@@ -221,7 +236,7 @@ function stopCurrentPlayback() {
 function unlockPlayback() {
   userInteracted = true;
   pushDebugLog('user.interaction');
-  if (shouldBePlaying && playbackState !== 'playing') {
+  if (shouldBePlaying && playbackState === 'paused') {
     void play();
   }
 }
@@ -275,52 +290,62 @@ export function getVolume() {
 }
 
 export async function play() {
+  if (inflightPlayPromise) {
+    pushDebugLog('play.skip.inflight');
+    return inflightPlayPromise;
+  }
+
   shouldBePlaying = true;
   setPlaybackState('loading');
   const playbackToken = ++activePlaybackToken;
   pushDebugLog('play.call', `token=${playbackToken} interacted=${userInteracted}`);
+  inflightPlayPromise = (async () => {
+    try {
+      const context = await resumeAudioContext();
+      const audioBuffer = await decodeCurrentSource(context);
 
-  try {
-    const context = await resumeAudioContext();
-    const audioBuffer = await decodeCurrentSource(context);
-
-    if (!shouldBePlaying || playbackToken !== activePlaybackToken) {
-      pushDebugLog('play.cancelled', `token=${playbackToken}`);
-      return;
-    }
-
-    stopCurrentPlayback();
-
-    const gainNode = context.createGain();
-    gainNode.gain.setValueAtTime(volume, context.currentTime);
-    gainNode.connect(context.destination);
-
-    const sourceNode = context.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.loop = true;
-    sourceNode.connect(gainNode);
-    sourceNode.onended = () => {
-      if (currentSourceNode !== sourceNode) return;
-      pushDebugLog('source.ended');
-      currentSourceNode = null;
-      currentGainNode = null;
-      if (!shouldBePlaying) {
-        setPlaybackState('paused');
+      if (!shouldBePlaying || playbackToken !== activePlaybackToken) {
+        pushDebugLog('play.cancelled', `token=${playbackToken}`);
+        return;
       }
-      emitDebug();
-    };
 
-    currentSourceNode = sourceNode;
-    currentGainNode = gainNode;
-    sourceNode.start(0);
-    pushDebugLog('play.started', `token=${playbackToken}`);
-    setPlaybackState('playing');
-    emitDebug();
-  } catch (error) {
-    pushDebugLog('play.failed', summarizeError(error));
-    setPlaybackState(userInteracted ? 'paused' : 'loading');
-    emitDebug();
-  }
+      stopCurrentPlayback();
+
+      const gainNode = context.createGain();
+      gainNode.gain.setValueAtTime(volume, context.currentTime);
+      gainNode.connect(context.destination);
+
+      const sourceNode = context.createBufferSource();
+      sourceNode.buffer = audioBuffer;
+      sourceNode.loop = true;
+      sourceNode.connect(gainNode);
+      sourceNode.onended = () => {
+        if (currentSourceNode !== sourceNode) return;
+        pushDebugLog('source.ended');
+        currentSourceNode = null;
+        currentGainNode = null;
+        if (!shouldBePlaying) {
+          setPlaybackState('paused');
+        }
+        emitDebug();
+      };
+
+      currentSourceNode = sourceNode;
+      currentGainNode = gainNode;
+      sourceNode.start(0);
+      pushDebugLog('play.started', `token=${playbackToken}`);
+      setPlaybackState('playing');
+      emitDebug();
+    } catch (error) {
+      pushDebugLog('play.failed', summarizeError(error));
+      setPlaybackState(userInteracted ? 'paused' : 'loading');
+      emitDebug();
+    } finally {
+      inflightPlayPromise = null;
+    }
+  })();
+
+  return inflightPlayPromise;
 }
 
 export function pause() {
@@ -329,6 +354,7 @@ export function pause() {
   pushDebugLog('pause.call');
   stopCurrentPlayback();
   setPlaybackState('paused');
+  inflightPlayPromise = null;
 }
 
 export function stop() {
@@ -337,6 +363,7 @@ export function stop() {
   pushDebugLog('stop.call');
   stopCurrentPlayback();
   setPlaybackState('stopped');
+  inflightPlayPromise = null;
 }
 
 export function getPlaybackState() {

@@ -2733,17 +2733,11 @@ function renderBgmStatus(state) {
 function renderBgmDebug(snapshot) {
   if (!bgmDebugEl || !snapshot) return;
   const audioInfo = snapshot.audio || {};
-  const errorInfo = audioInfo.error
-    ? `${audioInfo.error.code}${audioInfo.error.message ? ` ${audioInfo.error.message}` : ''}`
-    : 'none';
   const lines = [
     `state=${snapshot.playbackState} shouldPlay=${snapshot.shouldBePlaying} interacted=${snapshot.userInteracted}`,
-    `waiting=${snapshot.waitingForCanPlay} retry=${snapshot.retryOnNextInteraction} reload=${snapshot.reloadBeforeNextPlay}`,
-    `src=${audioInfo.src || '-'}`,
-    `currentSrc=${audioInfo.currentSrc || '-'}`,
-    `paused=${audioInfo.paused} ended=${audioInfo.ended} muted=${audioInfo.muted} loop=${audioInfo.loop}`,
-    `readyState=${audioInfo.readyState} networkState=${audioInfo.networkState} time=${audioInfo.currentTime} volume=${snapshot.volume}`,
-    `error=${errorInfo}`,
+    `sourceType=${snapshot.source?.type || '-'} source=${snapshot.source?.value || '-'}`,
+    `contextState=${audioInfo.contextState || '-'} sampleRate=${audioInfo.sampleRate || '-'} volume=${snapshot.volume}`,
+    `hasSourceNode=${audioInfo.hasSourceNode} hasGainNode=${audioInfo.hasGainNode}`,
     '',
     ...snapshot.logs
   ];
@@ -4200,7 +4194,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-copy-log-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-copy-log-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
