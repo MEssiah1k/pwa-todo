@@ -20,8 +20,6 @@ const debugListeners = new Set();
 const debugLogs = [];
 const decodedBufferCache = new Map();
 const pendingDecodeCache = new Map();
-const fetchedArrayBufferCache = new Map();
-const pendingFetchCache = new Map();
 
 function summarizeError(error) {
   if (!error) return '';
@@ -39,11 +37,6 @@ function shouldFallbackToHtmlAudio(error) {
     message.includes('encoding') ||
     message.includes('media')
   );
-}
-
-function shouldPreferHtmlAudioByUserAgent() {
-  const ua = navigator.userAgent || '';
-  return /EdgA\//.test(ua);
 }
 
 function emitState() {
@@ -149,41 +142,19 @@ function getSourceCacheKey() {
 }
 
 async function readSourceArrayBuffer() {
-  const cacheKey = getSourceCacheKey();
-  if (fetchedArrayBufferCache.has(cacheKey)) {
-    pushDebugLog('source.fetch.cache.hit', cacheKey);
-    return fetchedArrayBufferCache.get(cacheKey).slice(0);
-  }
-  if (pendingFetchCache.has(cacheKey)) {
-    pushDebugLog('source.fetch.pending.hit', cacheKey);
-    const pendingBuffer = await pendingFetchCache.get(cacheKey);
-    return pendingBuffer.slice(0);
-  }
-
-  const pendingFetch = (async () => {
   if (sourceConfig.type === 'file') {
     const file = sourceConfig.value;
     if (!file) throw new Error('未选择本地音频文件');
     pushDebugLog('source.file.read', `${file.name} ${file.size} bytes`);
-      return file.arrayBuffer();
-    }
-    pushDebugLog('source.fetch.start', sourceConfig.value);
-    const response = await fetch(sourceConfig.value, { cache: 'force-cache' });
-    pushDebugLog('source.fetch.done', `ok=${response.ok} status=${response.status}`);
-    if (!response.ok) {
-      throw new Error(`音频请求失败: ${response.status}`);
-    }
-    return response.arrayBuffer();
-  })();
-
-  pendingFetchCache.set(cacheKey, pendingFetch);
-  try {
-    const arrayBuffer = await pendingFetch;
-    fetchedArrayBufferCache.set(cacheKey, arrayBuffer.slice(0));
-    return arrayBuffer.slice(0);
-  } finally {
-    pendingFetchCache.delete(cacheKey);
+    return file.arrayBuffer();
   }
+  pushDebugLog('source.fetch.start', sourceConfig.value);
+  const response = await fetch(sourceConfig.value, { cache: 'no-store' });
+  pushDebugLog('source.fetch.done', `ok=${response.ok} status=${response.status}`);
+  if (!response.ok) {
+    throw new Error(`音频请求失败: ${response.status}`);
+  }
+  return response.arrayBuffer();
 }
 
 async function decodeCurrentSource(context) {
@@ -324,29 +295,6 @@ function ensureHtmlAudio() {
   return htmlAudio;
 }
 
-function preloadDefaultSource() {
-  // 先禁用预加载。移动端 Edge 上提前 load 会让 html audio 卡在 waiting。
-}
-
-function preloadDecodedDefaultSource() {
-  if (forceHtmlAudioFallback) return;
-  if (sourceConfig.type !== 'url' || sourceConfig.value !== DEFAULT_BGM_SRC) return;
-  let context = null;
-  try {
-    context = ensureAudioContext();
-  } catch (error) {
-    pushDebugLog('preload.decode.skipped', summarizeError(error));
-    return;
-  }
-  void decodeCurrentSource(context)
-    .then(() => {
-      pushDebugLog('preload.decode.ready');
-    })
-    .catch(error => {
-      pushDebugLog('preload.decode.failed', summarizeError(error));
-    });
-}
-
 function resolveSourceUrl() {
   if (sourceConfig.type === 'file') {
     const file = sourceConfig.value;
@@ -379,17 +327,8 @@ function unlockPlayback() {
   }
 }
 
-export function primePlaybackFromGesture() {
-  userInteracted = true;
-  pushDebugLog('user.gesture.prime');
-}
-
 export function init() {
   pushDebugLog('init', DEFAULT_BGM_SRC);
-  if (shouldPreferHtmlAudioByUserAgent()) {
-    forceHtmlAudioFallback = true;
-    pushDebugLog('fallback.prefer', 'html-audio');
-  }
   emitState();
   if (window.__pwaTodoBgmInitBound) return;
   window.__pwaTodoBgmInitBound = true;

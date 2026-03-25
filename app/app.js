@@ -15,12 +15,12 @@ import {
   updateRecurrenceRule,
   deleteRecurrenceRule,
   getTodosByRuleId
-} from './db.js?v=20260325-module-fix-1';
-import * as bgm from './bgm.js?v=20260325-htmlaudio-rollback-3';
+} from './db.js';
+import * as bgm from './bgm.js';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
-} from './storage-scope.js?v=20260325-module-fix-1';
+} from './storage-scope.js';
 import {
   initSync,
   syncNow,
@@ -32,7 +32,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260325-module-fix-1';
+} from './sync.js';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -143,7 +143,7 @@ const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
 const regretCoinStatusEl = document.getElementById('regret-coin-status');
 const regretCoinSpendInput = document.getElementById('regret-coin-spend-input');
 const regretCoinSpendBtn = document.getElementById('regret-coin-spend-btn');
-const APP_VERSION = 'v0.1.7';
+const APP_VERSION = 'v0.1.3';
 const RECURRENCE_SKIP_META_KEY = 'recurrenceSkips';
 const CONTRIBUTION_START_YEAR = 2026;
 const TIMER_TIMELINE_META_KEY = 'timerTimelineByDate';
@@ -3807,7 +3807,6 @@ if (timerMinutesInput) {
 
 if (timerToggleBtn) {
   timerToggleBtn.addEventListener('click', () => {
-    bgm.primePlaybackFromGesture();
     if (timerRunning) pauseTimer();
     else startTimer();
   });
@@ -4197,7 +4196,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-htmlaudio-rollback-3', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-fallback-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
