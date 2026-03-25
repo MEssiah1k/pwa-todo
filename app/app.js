@@ -3787,7 +3787,21 @@ updateToggleLabel();
 bgm.init();
 renderBgmStatus(bgm.getPlaybackState());
 bgm.subscribePlaybackState(renderBgmStatus);
-bgm.subscribeDebug(renderBgmDebug);
+if (typeof bgm.subscribeDebug === 'function') {
+  bgm.subscribeDebug(renderBgmDebug);
+} else {
+  renderBgmDebug({
+    playbackState: bgm.getPlaybackState(),
+    shouldBePlaying: false,
+    userInteracted: false,
+    waitingForCanPlay: false,
+    retryOnNextInteraction: false,
+    reloadBeforeNextPlay: false,
+    volume: bgm.getVolume(),
+    audio: null,
+    logs: ['当前仍是旧版 bgm.js 缓存，调试日志能力未加载。请刷新到最新版本后重试。']
+  });
+}
 ensureTimerLeaseLoop();
 window.addEventListener('storage', event => {
   if (event.key !== TIMER_LEASE_KEY) return;
@@ -4129,7 +4143,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-debug', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-debug-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
