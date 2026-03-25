@@ -1205,10 +1205,28 @@ section {
   margin-top: 14px;
 }
 
-.bgm-debug-title {
+.bgm-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
+}
+
+.bgm-debug-title {
   color: var(--muted);
   font-size: 13px;
+}
+
+.bgm-debug-copy {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .bgm-debug {

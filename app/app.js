@@ -137,6 +137,7 @@ const bgmCloseBtn = document.getElementById('bgm-close');
 const bgmCurrentName = document.getElementById('bgm-current-name');
 const bgmVolume = document.getElementById('bgm-volume');
 const bgmDebugEl = document.getElementById('bgm-debug');
+const bgmDebugCopyBtn = document.getElementById('bgm-debug-copy');
 const alarmVolume = document.getElementById('alarm-volume');
 const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
 const regretCoinStatusEl = document.getElementById('regret-coin-status');
@@ -2749,6 +2750,56 @@ function renderBgmDebug(snapshot) {
   bgmDebugEl.textContent = lines.join('\n');
 }
 
+let bgmDebugCopyTimer = null;
+
+function setBgmDebugCopyLabel(text) {
+  if (!bgmDebugCopyBtn) return;
+  bgmDebugCopyBtn.textContent = text;
+  if (bgmDebugCopyTimer) {
+    clearTimeout(bgmDebugCopyTimer);
+    bgmDebugCopyTimer = null;
+  }
+  if (text === '复制日志') return;
+  bgmDebugCopyTimer = window.setTimeout(() => {
+    if (!bgmDebugCopyBtn) return;
+    bgmDebugCopyBtn.textContent = '复制日志';
+    bgmDebugCopyTimer = null;
+  }, 1600);
+}
+
+async function copyBgmDebugText() {
+  if (!bgmDebugEl) return;
+  const text = bgmDebugEl.textContent || '';
+  if (!text.trim()) {
+    setBgmDebugCopyLabel('无内容');
+    return;
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      setBgmDebugCopyLabel('已复制');
+      return;
+    } catch (err) {
+      // 回退到选区复制
+    }
+  }
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(bgmDebugEl);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (err) {
+    copied = false;
+  }
+  selection.removeAllRanges();
+  setBgmDebugCopyLabel(copied ? '已复制' : '复制失败');
+}
+
 function triggerChangeSync() {
   pendingChangeSync = true;
   void flushChangeSync();
@@ -3964,6 +4015,12 @@ if (bgmCloseBtn) {
   });
 }
 
+if (bgmDebugCopyBtn) {
+  bgmDebugCopyBtn.addEventListener('click', () => {
+    void copyBgmDebugText();
+  });
+}
+
 if (bgmModal) {
   bgmModal.addEventListener('click', event => {
     if (event.target === bgmModal) bgmModal.classList.add('hidden');
@@ -4143,7 +4200,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-webaudio-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260325-bgm-copy-log-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
