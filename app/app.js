@@ -37,6 +37,7 @@ import {
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
 const dueInput = document.getElementById('todo-due');
+const todoFilterCategory = document.getElementById('todo-filter-category');
 const addBtn = document.getElementById('add-btn');
 const list = document.getElementById('todo-list');
 const completedList = document.getElementById('completed-list');
@@ -1059,8 +1060,13 @@ function renderTodos() {
   list.innerHTML = '';
   if (completedList) completedList.innerHTML = '';
   runningTimeEls.clear();
+  const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
   const visibleTodos = todos
-    .filter(todo => !todo.deletedAt);
+    .filter(todo => !todo.deletedAt)
+    .filter(todo => {
+      if (selectedCategoryFilter === 'All') return true;
+      return parseCategorizedText(todo.text).category === selectedCategoryFilter;
+    });
   const pendingTodos = visibleTodos
     .filter(todo => !todo.completed)
     .sort(comparePendingTodos);
@@ -1583,6 +1589,12 @@ input.addEventListener('keydown', event => {
 if (dueInput) {
   dueInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') addBtn.click();
+  });
+}
+
+if (todoFilterCategory) {
+  todoFilterCategory.addEventListener('change', () => {
+    renderTodos();
   });
 }
 

@@ -61,7 +61,7 @@
 
   <section id="todo-module">
     <div class="section-header">
-      <h2>待办事项</h2>
+      <h2>新增待办事项</h2>
       <button id="recurrence-open" type="button" class="header-action">重复规则</button>
     </div>
     <div class="input-row todo-category-row">
@@ -81,6 +81,19 @@
     </div>
     <div class="input-row secondary-row">
       <input id="todo-due" type="number" inputmode="numeric" min="0" step="1" placeholder="预计时长(min)" aria-label="预计时长" />
+    </div>
+    <div class="todo-list-header">未完成事项</div>
+    <div class="input-row todo-filter-row">
+      <select id="todo-filter-category" aria-label="筛选任务种类">
+        <option value="All" selected>全部</option>
+        <option value="Work">Work</option>
+        <option value="Life">Life</option>
+        <option value="Health">Health</option>
+        <option value="Social">Social</option>
+        <option value="Growth">Growth</option>
+        <option value="Leisure">Leisure</option>
+        <option value="Plan">Plan</option>
+      </select>
     </div>
     <p id="status" aria-live="polite"></p>
     <ul id="todo-list"></ul>

@@ -809,6 +809,7 @@ section {
 
 
 #todo-category,
+#todo-filter-category,
 #todo-input {
   width: 100%;
   min-width: 0;
@@ -828,8 +829,25 @@ section {
   flex: 0 0 110px;
 }
 
+#todo-filter-category {
+  width: 120px;
+  flex: 0 0 120px;
+}
+
 .todo-category-row {
   justify-content: flex-start;
+}
+
+.todo-filter-row {
+  justify-content: flex-start;
+  margin: 2px 0 0;
+}
+
+.todo-list-header {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .input-row {
@@ -903,9 +921,13 @@ section {
 }
 
 #status {
-  margin: 10px 0 0;
+  margin: 0;
   color: #ef4444;
-  min-height: 20px;
+  min-height: 0;
+}
+
+#status:empty {
+  display: none;
 }
 
 #summary-status {
@@ -918,7 +940,7 @@ section {
 #completed-list {
   list-style: none;
   padding: 0;
-  margin-top: 0.1px;
+  margin-top: 6px;
 }
 
 #todo-list li,
