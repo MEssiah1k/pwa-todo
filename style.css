@@ -930,19 +930,46 @@ section {
   display: none;
 }
 
+#todo-queue-panel {
+  display: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border: none;
+  outline: 2px solid var(--todo-active-border);
+  outline-offset: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--todo-active) 72%, transparent);
+  box-shadow: inset 0 0 0 1px var(--todo-active-glow);
+  overflow: hidden;
+}
+
+#todo-queue-panel.has-items {
+  display: block;
+}
+
 #summary-status {
   margin: 10px 0 0;
   color: #ef4444;
   min-height: 20px;
 }
 
+#todo-queue-list,
 #todo-list,
 #completed-list {
   list-style: none;
   padding: 0;
+}
+
+#todo-queue-list {
+  margin: 0;
+}
+
+#todo-list,
+#completed-list {
   margin-top: 6px;
 }
 
+#todo-queue-list li,
 #todo-list li,
 #completed-list li {
   display: flex;
@@ -957,23 +984,36 @@ section {
   background: var(--todo);
 }
 
+#todo-queue-list li {
+  margin-bottom: 8px;
+}
+
+#todo-queue-list li:last-child {
+  margin-bottom: 0;
+}
+
+#todo-queue-list li[draggable="true"],
 #todo-list li[draggable="true"] {
   cursor: grab;
 }
 
+#todo-queue-list li.todo-dragging,
 #todo-list li.todo-dragging {
   opacity: 0.55;
   cursor: grabbing;
 }
 
+#todo-queue-list li.todo-drop-before,
 #todo-list li.todo-drop-before {
   border-top: 3px solid var(--todo-active-border);
 }
 
+#todo-queue-list li.todo-drop-after,
 #todo-list li.todo-drop-after {
   border-bottom: 3px solid var(--todo-active-border);
 }
 
+#todo-queue-list li.in-progress,
 #todo-list li.in-progress,
 #completed-list li.in-progress {
   background: var(--todo-active);
@@ -981,6 +1021,7 @@ section {
   box-shadow: 0 0 0 2px var(--todo-active-glow);
 }
 
+#todo-queue-list li.completed,
 #todo-list li.completed,
 #completed-list li.completed {
   text-decoration: line-through;
@@ -1029,7 +1070,8 @@ section {
 
 .move-btn,
 .progress-btn,
-.delete-btn {
+.delete-btn,
+.queue-btn {
   margin-left: 0;
   padding: 6px 10px;
   border: none;
@@ -1056,6 +1098,14 @@ section {
 
 .move-btn {
   background: #f59e0b;
+}
+
+.queue-btn {
+  background: #ca8a04;
+}
+
+.queue-btn:hover {
+  background: #a16207;
 }
 
 .move-btn:hover {
@@ -1092,12 +1142,22 @@ section {
   border-color: color-mix(in srgb, var(--text) 20%, var(--border) 80%);
 }
 
+#todo-queue-list li:hover .delete-btn,
+#todo-queue-list li:hover .move-btn,
+#todo-queue-list li:hover .progress-btn,
+#todo-queue-list li:hover .queue-btn,
+#todo-queue-list li:focus-within .delete-btn,
+#todo-queue-list li:focus-within .move-btn,
+#todo-queue-list li:focus-within .progress-btn,
+#todo-queue-list li:focus-within .queue-btn,
 #todo-list li:hover .delete-btn,
 #todo-list li:hover .move-btn,
 #todo-list li:hover .progress-btn,
+#todo-list li:hover .queue-btn,
 #todo-list li:focus-within .delete-btn,
 #todo-list li:focus-within .move-btn,
 #todo-list li:focus-within .progress-btn,
+#todo-list li:focus-within .queue-btn,
 #completed-list li:hover .delete-btn,
 #completed-list li:hover .move-btn,
 #completed-list li:hover .progress-btn,

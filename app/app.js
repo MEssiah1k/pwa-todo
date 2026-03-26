@@ -38,6 +38,8 @@ const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
 const dueInput = document.getElementById('todo-due');
 const todoFilterCategory = document.getElementById('todo-filter-category');
+const todoQueuePanel = document.getElementById('todo-queue-panel');
+const todoQueueList = document.getElementById('todo-queue-list');
 const addBtn = document.getElementById('add-btn');
 const list = document.getElementById('todo-list');
 const completedList = document.getElementById('completed-list');
@@ -169,13 +171,14 @@ const DAILY_FATIGUE_REMOTE_KEY = 'daily_fatigue_answers';
 
 let todos = [];
 let draggedTodoId = null;
+let draggedTodoGroup = null;
 let suppressTodoClickUntil = 0;
 let summaries = [];
 let selectedDate = formatDateLocal(new Date());
 let migrationDone = false;
 let recurrenceRules = [];
 let editingRecurrenceRuleId = null;
-const MAX_IN_PROGRESS_TODOS = 2;
+const MAX_IN_PROGRESS_TODOS = 3;
 const IN_PROGRESS_LOCAL_KEY = createScopedStorageKey('pwaTodo.todoInProgress');
 let inProgressTodos = new Map();
 let restoreInProgressPromise = null;
@@ -971,7 +974,7 @@ async function loadTodos() {
   await migrateMissingTodoDates();
   await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
-  todos = await ensurePendingTodoSortOrders(todos);
+  todos = await ensurePendingTodoOrders(todos);
   renderTodos();
 }
 
@@ -1018,6 +1021,8 @@ async function carryOverIncomplete(fromDate, toDate) {
       date: toDate,
       text: todo.text,
       completed: false,
+      queued: false,
+      queueOrder: null,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1042,6 +1047,8 @@ async function moveTodoToTomorrow(todo) {
     ...todo,
     date: tomorrowDate,
     completed: false,
+    queued: false,
+    queueOrder: null,
     sortOrder: null,
     recurrenceRuleId: null,
     updatedAt: now
@@ -1058,19 +1065,25 @@ async function moveTodoToTomorrow(todo) {
 
 function renderTodos() {
   list.innerHTML = '';
+  if (todoQueueList) todoQueueList.innerHTML = '';
   if (completedList) completedList.innerHTML = '';
   runningTimeEls.clear();
   const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
-  const visibleTodos = todos
-    .filter(todo => !todo.deletedAt)
+  const activeTodos = todos.filter(todo => !todo.deletedAt);
+  const pendingTodos = activeTodos
+    .filter(todo => !todo.completed)
+    .sort(comparePendingTodos);
+  const queuedTodos = pendingTodos
+    .filter(todo => isTodoQueued(todo))
+    .sort(compareQueuedTodos);
+  const listTodos = pendingTodos
+    .filter(todo => !isTodoQueued(todo))
     .filter(todo => {
       if (selectedCategoryFilter === 'All') return true;
       return parseCategorizedText(todo.text).category === selectedCategoryFilter;
-    });
-  const pendingTodos = visibleTodos
-    .filter(todo => !todo.completed)
+    })
     .sort(comparePendingTodos);
-  const doneTodos = visibleTodos
+  const doneTodos = activeTodos
     .filter(todo => todo.completed)
     .sort((a, b) => {
       const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
@@ -1078,20 +1091,26 @@ function renderTodos() {
       return bTime - aTime;
     });
 
-  const renderTodoItem = (todo, targetList) => {
+  if (todoQueuePanel) {
+    todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
+  }
+
+  const renderTodoItem = (todo, targetList, group = 'list') => {
     const li = document.createElement('li');
     li.className = todo.completed ? 'completed' : '';
     if (isTodoInProgress(todo)) li.classList.add('in-progress');
     li.dataset.id = String(todo.id);
-    li.draggable = targetList === list;
+    li.dataset.group = group;
+    li.draggable = targetList === list || targetList === todoQueueList;
 
-    if (targetList === list) {
+    if (targetList === list || targetList === todoQueueList) {
       li.ondragstart = event => {
         if (li.classList.contains('editing')) {
           event.preventDefault();
           return;
         }
         draggedTodoId = todo.id;
+        draggedTodoGroup = group;
         li.classList.add('todo-dragging');
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = 'move';
@@ -1100,11 +1119,12 @@ function renderTodos() {
       };
       li.ondragend = () => {
         draggedTodoId = null;
+        draggedTodoGroup = null;
         li.classList.remove('todo-dragging');
         clearTodoDropIndicatorClasses();
       };
       li.ondragover = event => {
-        if (draggedTodoId == null || draggedTodoId === todo.id) return;
+        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
         event.preventDefault();
         const insertAfter = shouldInsertAfter(event, li);
         li.classList.toggle('todo-drop-before', !insertAfter);
@@ -1114,12 +1134,12 @@ function renderTodos() {
         li.classList.remove('todo-drop-before', 'todo-drop-after');
       };
       li.ondrop = async event => {
-        if (draggedTodoId == null || draggedTodoId === todo.id) return;
+        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
         event.preventDefault();
         const insertAfter = shouldInsertAfter(event, li);
         suppressTodoClickUntil = Date.now() + 300;
         clearTodoDropIndicatorClasses();
-        await reorderPendingTodos(draggedTodoId, todo.id, insertAfter);
+        await reorderPendingTodos(draggedTodoId, todo.id, insertAfter, group);
       };
     }
 
@@ -1192,8 +1212,36 @@ function renderTodos() {
       if (changed) loadTodos();
     };
 
+    const queueBtn = document.createElement('button');
+    queueBtn.className = 'queue-btn';
+    queueBtn.type = 'button';
+    queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
+    queueBtn.onclick = async event => {
+      event.stopPropagation();
+      const now = new Date().toISOString();
+      if (isTodoQueued(todo)) {
+        await updateTodo({
+          ...todo,
+          queued: false,
+          queueOrder: null,
+          sortOrder: getLastPendingSortOrder() + 1,
+          updatedAt: now
+        });
+      } else {
+        await updateTodo({
+          ...todo,
+          queued: true,
+          queueOrder: getNextQueuedSortOrder(),
+          updatedAt: now
+        });
+      }
+      triggerChangeSync();
+      loadTodos();
+    };
+
     const actions = document.createElement('div');
     actions.className = 'todo-actions';
+    if (!todo.completed) actions.appendChild(queueBtn);
     actions.appendChild(moveBtn);
     actions.appendChild(progressBtn);
     actions.appendChild(del);
@@ -1208,6 +1256,8 @@ function renderTodos() {
       await updateTodo({
         ...todo,
         completed: nextCompleted,
+        queued: nextCompleted ? false : todo.queued,
+        queueOrder: nextCompleted ? null : todo.queueOrder ?? null,
         updatedAt: new Date().toISOString()
       });
       if (nextCompleted) await clearTodoInProgress(todo.uuid);
@@ -1226,7 +1276,8 @@ function renderTodos() {
     targetList.appendChild(li);
   };
 
-  pendingTodos.forEach(todo => renderTodoItem(todo, list));
+  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue'));
+  listTodos.forEach(todo => renderTodoItem(todo, list, 'list'));
   if (completedList) {
     doneTodos.forEach(todo => renderTodoItem(todo, completedList));
   }
@@ -1237,6 +1288,10 @@ function renderTodos() {
 
 function isTodoInProgress(todo) {
   return Boolean(todo && todo.uuid && inProgressTodos.has(todo.uuid));
+}
+
+function isTodoQueued(todo) {
+  return Boolean(todo && !todo.deletedAt && !todo.completed && todo.queued);
 }
 
 function getTodoSortTime(todo) {
@@ -1254,31 +1309,56 @@ function comparePendingTodos(a, b) {
   return getTodoSortTime(b) - getTodoSortTime(a);
 }
 
-async function ensurePendingTodoSortOrders(items) {
-  const pendingTodos = items.filter(todo => todo && !todo.deletedAt && !todo.completed);
-  if (!pendingTodos.some(todo => !Number.isFinite(todo.sortOrder))) {
-    return items;
+function compareQueuedTodos(a, b) {
+  const aOrder = Number.isFinite(a.queueOrder) ? a.queueOrder : null;
+  const bOrder = Number.isFinite(b.queueOrder) ? b.queueOrder : null;
+  if (aOrder != null && bOrder != null && aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+  if (aOrder != null) return -1;
+  if (bOrder != null) return 1;
+  return getTodoSortTime(b) - getTodoSortTime(a);
+}
+
+async function ensurePendingGroupOrders(items, group) {
+  const isQueueGroup = group === 'queue';
+  const orderKey = isQueueGroup ? 'queueOrder' : 'sortOrder';
+  const compare = isQueueGroup ? compareQueuedTodos : comparePendingTodos;
+  const pendingTodos = items.filter(todo =>
+    todo &&
+    !todo.deletedAt &&
+    !todo.completed &&
+    (isQueueGroup ? isTodoQueued(todo) : !isTodoQueued(todo))
+  );
+  if (!pendingTodos.some(todo => !Number.isFinite(todo[orderKey]))) {
+    return new Map();
   }
 
-  const orderedTodos = [...pendingTodos].sort(comparePendingTodos);
+  const orderedTodos = [...pendingTodos].sort(compare);
   const updatedById = new Map();
-
   await Promise.all(
     orderedTodos.map(async (todo, index) => {
-      if (todo.sortOrder === index) {
+      if (todo[orderKey] === index) {
         updatedById.set(todo.id, todo);
         return;
       }
       const nextTodo = {
         ...todo,
-        sortOrder: index
+        [orderKey]: index
       };
       await updateTodo(nextTodo);
       updatedById.set(todo.id, nextTodo);
     })
   );
+  return updatedById;
+}
 
-  return items.map(todo => updatedById.get(todo.id) || todo);
+async function ensurePendingTodoOrders(items) {
+  const [listUpdates, queueUpdates] = await Promise.all([
+    ensurePendingGroupOrders(items, 'list'),
+    ensurePendingGroupOrders(items, 'queue')
+  ]);
+  return items.map(todo => listUpdates.get(todo.id) || queueUpdates.get(todo.id) || todo);
 }
 
 function shouldInsertAfter(event, element) {
@@ -1287,16 +1367,23 @@ function shouldInsertAfter(event, element) {
 }
 
 function clearTodoDropIndicatorClasses() {
-  if (!list) return;
-  list
+  document
     .querySelectorAll('.todo-drop-before, .todo-drop-after, .todo-dragging')
     .forEach(item => item.classList.remove('todo-drop-before', 'todo-drop-after', 'todo-dragging'));
 }
 
-async function reorderPendingTodos(draggedId, targetId, insertAfter) {
+async function reorderPendingTodos(draggedId, targetId, insertAfter, group = 'list') {
+  const isQueueGroup = group === 'queue';
+  const compare = isQueueGroup ? compareQueuedTodos : comparePendingTodos;
+  const orderKey = isQueueGroup ? 'queueOrder' : 'sortOrder';
   const orderedPendingTodos = todos
-    .filter(todo => todo && !todo.deletedAt && !todo.completed)
-    .sort(comparePendingTodos);
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      (isQueueGroup ? isTodoQueued(todo) : !isTodoQueued(todo))
+    )
+    .sort(compare);
   const draggedIndex = orderedPendingTodos.findIndex(todo => todo.id === draggedId);
   const targetIndex = orderedPendingTodos.findIndex(todo => todo.id === targetId);
   if (draggedIndex < 0 || targetIndex < 0) return;
@@ -1310,13 +1397,13 @@ async function reorderPendingTodos(draggedId, targetId, insertAfter) {
   const updatedById = new Map();
   await Promise.all(
     reorderedTodos.map(async (todo, index) => {
-      if (todo.sortOrder === index) {
+      if (todo[orderKey] === index) {
         updatedById.set(todo.id, todo);
         return;
       }
       const nextTodo = {
         ...todo,
-        sortOrder: index
+        [orderKey]: index
       };
       await updateTodo(nextTodo);
       updatedById.set(todo.id, nextTodo);
@@ -1457,7 +1544,7 @@ async function toggleTodoInProgress(todo) {
     return true;
   }
   if (inProgressTodos.size >= MAX_IN_PROGRESS_TODOS) {
-    setStatus('最多同时进行 2 个任务');
+    setStatus('最多同时进行 3 个任务');
     return false;
   }
   inProgressTodos.set(todo.uuid, Date.now());
@@ -1516,10 +1603,44 @@ function setStatus(message) {
 
 function getNextPendingSortOrder() {
   const pendingOrders = todos
-    .filter(todo => todo && !todo.deletedAt && !todo.completed && Number.isFinite(todo.sortOrder))
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      !isTodoQueued(todo) &&
+      Number.isFinite(todo.sortOrder)
+    )
     .map(todo => todo.sortOrder);
   if (!pendingOrders.length) return 0;
   return Math.min(...pendingOrders) - 1;
+}
+
+function getLastPendingSortOrder() {
+  const pendingOrders = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      !isTodoQueued(todo) &&
+      Number.isFinite(todo.sortOrder)
+    )
+    .map(todo => todo.sortOrder);
+  if (!pendingOrders.length) return -1;
+  return Math.max(...pendingOrders);
+}
+
+function getNextQueuedSortOrder() {
+  const queuedOrders = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      isTodoQueued(todo) &&
+      Number.isFinite(todo.queueOrder)
+    )
+    .map(todo => todo.queueOrder);
+  if (!queuedOrders.length) return 0;
+  return Math.max(...queuedOrders) + 1;
 }
 
 function formatTodoText(category, text) {
@@ -1567,6 +1688,8 @@ addBtn.onclick = async () => {
     date: selectedDate,
     text: formatTodoText(todoCategory ? todoCategory.value : 'Work', text),
     completed: false,
+    queued: false,
+    queueOrder: null,
     sortOrder: getNextPendingSortOrder(),
     createdAt: now,
     updatedAt: now,
