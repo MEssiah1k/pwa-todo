@@ -56,12 +56,10 @@ const timerTimelineSummary = document.getElementById('timer-timeline-summary');
 const contributionChart = document.getElementById('contribution-chart');
 const contributionSummary = document.getElementById('contribution-summary');
 const contributionTitle = document.getElementById('contribution-title');
-const dailyFatigueCard = document.getElementById('daily-fatigue-card');
-const fatigueYesBtn = document.getElementById('fatigue-yes-btn');
-const fatigueNoBtn = document.getElementById('fatigue-no-btn');
 const taskStatusChart = document.getElementById('task-status-chart');
 const taskStatusSummary = document.getElementById('task-status-summary');
 const taskStatusTitle = document.getElementById('task-status-title');
+const workPunchBtns = Array.from(document.querySelectorAll('.work-punch-head-btn'));
 const timelineEditModal = document.getElementById('timeline-edit-modal');
 const timelineEditCloseBtn = document.getElementById('timeline-edit-close');
 const timelineEditTitle = document.getElementById('timeline-edit-title');
@@ -168,6 +166,7 @@ const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
 const TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerState');
 const ASSIST_TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerState');
 const ASSIST_TIMER_PRESETS_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerPresets');
+const WORK_PUNCH_LOCAL_KEY = createScopedStorageKey('pwaTodo.workPunchRecords');
 const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
 const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
 const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
@@ -178,9 +177,6 @@ const REGRET_COIN_LAST_SYNC_AT_META_KEY = 'regretCoinLedgerUpdatedAt';
 const REGRET_COIN_LEDGER_REMOTE_KEY = 'regret_coin_ledger';
 const DAILY_SETTLEMENT_REMOTE_PREFIX = 'daily_settlement:';
 const NATURAL_DAY_META_KEY = 'lastKnownNaturalDate';
-const DAILY_FATIGUE_META_KEY = 'dailyFatigueAnswers';
-const DAILY_FATIGUE_UPDATED_AT_META_KEY = 'dailyFatigueAnswersUpdatedAt';
-const DAILY_FATIGUE_REMOTE_KEY = 'daily_fatigue_answers';
 
 let todos = [];
 let draggedTodoId = null;
@@ -202,7 +198,6 @@ let taskSummaryStatusByDate = new Map();
 let timerTimelineByDate = {};
 let activeTimerSegment = null;
 let regretCoinLedger = [];
-let dailyFatigueAnswers = {};
 let timelineEditingSegmentId = null;
 let timelineEditingDate = '';
 let timelineEditingDraft = [];
@@ -565,150 +560,6 @@ async function reconcileSettlementRewardsFromCloud() {
 function renderRegretCoinSection() {
   if (regretCoinBalanceEl) {
     regretCoinBalanceEl.textContent = String(Math.max(0, getRegretCoinBalance()));
-  }
-}
-
-function normalizeDailyFatigueAnswers(value) {
-  const source = value && typeof value === 'object' ? value : {};
-  return Object.fromEntries(
-    Object.entries(source)
-      .filter(([dateStr, item]) => Boolean(dateStr) && item && typeof item === 'object')
-      .map(([dateStr, item]) => {
-        const answer = item.answer === 'yes' || item.answer === 'no' ? item.answer : null;
-        const updatedAt = typeof item.updatedAt === 'string' && item.updatedAt
-          ? item.updatedAt
-          : '';
-        return [dateStr, { answer, updatedAt }];
-      })
-      .filter(([, item]) => Boolean(item.answer))
-  );
-}
-
-function getDailyFatigueAnswer(dateStr = selectedDate) {
-  const record = dailyFatigueAnswers && typeof dailyFatigueAnswers === 'object'
-    ? dailyFatigueAnswers[dateStr]
-    : null;
-  return record && (record.answer === 'yes' || record.answer === 'no')
-    ? record.answer
-    : null;
-}
-
-function shouldShowDailyFatigueQuestion(dateStr = selectedDate, now = new Date()) {
-  return dateStr === formatDateLocal(now) && now.getHours() === 23;
-}
-
-function renderDailyFatigueQuestion() {
-  const isVisible = shouldShowDailyFatigueQuestion(selectedDate);
-  if (dailyFatigueCard) {
-    dailyFatigueCard.classList.toggle('hidden', !isVisible);
-  }
-  const answer = getDailyFatigueAnswer(selectedDate);
-  const buttonStates = [
-    [fatigueYesBtn, answer === 'yes'],
-    [fatigueNoBtn, answer === 'no']
-  ];
-  buttonStates.forEach(([button, selected]) => {
-    if (!button) return;
-    button.classList.toggle('is-selected', selected);
-    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-  });
-}
-
-async function persistDailyFatigueAnswers(updatedAt = new Date().toISOString()) {
-  dailyFatigueAnswers = normalizeDailyFatigueAnswers(dailyFatigueAnswers);
-  await Promise.all([
-    setMeta(DAILY_FATIGUE_META_KEY, dailyFatigueAnswers),
-    setMeta(DAILY_FATIGUE_UPDATED_AT_META_KEY, updatedAt)
-  ]);
-}
-
-function mergeDailyFatigueAnswers(localAnswers, remoteAnswers) {
-  const merged = {};
-  const allDates = new Set([
-    ...Object.keys(localAnswers || {}),
-    ...Object.keys(remoteAnswers || {})
-  ]);
-  allDates.forEach(dateStr => {
-    const localRecord = localAnswers && localAnswers[dateStr] ? localAnswers[dateStr] : null;
-    const remoteRecord = remoteAnswers && remoteAnswers[dateStr] ? remoteAnswers[dateStr] : null;
-    if (!localRecord && remoteRecord) {
-      merged[dateStr] = remoteRecord;
-      return;
-    }
-    if (localRecord && !remoteRecord) {
-      merged[dateStr] = localRecord;
-      return;
-    }
-    if (!localRecord && !remoteRecord) return;
-    merged[dateStr] = (remoteRecord.updatedAt || '') > (localRecord.updatedAt || '')
-      ? remoteRecord
-      : localRecord;
-  });
-  return normalizeDailyFatigueAnswers(merged);
-}
-
-async function syncDailyFatigueAnswersFromCloud() {
-  const [localRecord, localUpdatedAtRecord, remoteRow] = await Promise.all([
-    getMeta(DAILY_FATIGUE_META_KEY),
-    getMeta(DAILY_FATIGUE_UPDATED_AT_META_KEY),
-    fetchRemoteKv(DAILY_FATIGUE_REMOTE_KEY)
-  ]);
-  const localAnswers = normalizeDailyFatigueAnswers(localRecord ? localRecord.value : {});
-  const remoteAnswers = normalizeDailyFatigueAnswers(remoteRow && remoteRow.value ? remoteRow.value.answers : {});
-  const mergedAnswers = mergeDailyFatigueAnswers(localAnswers, remoteAnswers);
-  const localUpdatedAt = localUpdatedAtRecord && typeof localUpdatedAtRecord.value === 'string'
-    ? localUpdatedAtRecord.value
-    : '';
-  const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
-  const mergedUpdatedAt = [localUpdatedAt, remoteUpdatedAt]
-    .filter(Boolean)
-    .sort()
-    .slice(-1)[0] || new Date().toISOString();
-
-  dailyFatigueAnswers = mergedAnswers;
-  await persistDailyFatigueAnswers(mergedUpdatedAt);
-
-  const remoteSnapshot = JSON.stringify(remoteAnswers);
-  const mergedSnapshot = JSON.stringify(mergedAnswers);
-  if (syncReady && (remoteUpdatedAt < mergedUpdatedAt || remoteSnapshot !== mergedSnapshot)) {
-    await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: mergedAnswers }, mergedUpdatedAt);
-  }
-  renderDailyFatigueQuestion();
-}
-
-async function restoreDailyFatigueAnswersLocal() {
-  const record = await getMeta(DAILY_FATIGUE_META_KEY);
-  dailyFatigueAnswers = normalizeDailyFatigueAnswers(record ? record.value : {});
-  renderDailyFatigueQuestion();
-}
-
-async function setDailyFatigueAnswer(answer) {
-  const nextAnswer = answer === 'yes' ? 'yes' : answer === 'no' ? 'no' : null;
-  if (!nextAnswer) return;
-  const currentAnswer = getDailyFatigueAnswer(selectedDate);
-  const updatedAt = new Date().toISOString();
-  if (currentAnswer === nextAnswer) {
-    const nextAnswers = { ...dailyFatigueAnswers };
-    delete nextAnswers[selectedDate];
-    dailyFatigueAnswers = nextAnswers;
-    await persistDailyFatigueAnswers(updatedAt);
-    renderDailyFatigueQuestion();
-    if (syncReady) {
-      await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: dailyFatigueAnswers }, updatedAt);
-    }
-    return;
-  }
-  dailyFatigueAnswers = {
-    ...dailyFatigueAnswers,
-    [selectedDate]: {
-      answer: nextAnswer,
-      updatedAt
-    }
-  };
-  await persistDailyFatigueAnswers(updatedAt);
-  renderDailyFatigueQuestion();
-  if (syncReady) {
-    await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: dailyFatigueAnswers }, updatedAt);
   }
 }
 
@@ -3114,7 +2965,6 @@ async function restoreRegretCoinLedgerLocal() {
 }
 
 void restoreRegretCoinLedgerLocal();
-void restoreDailyFatigueAnswersLocal();
 
 function autoResizeSummary() {
   if (!summaryInput) return;
@@ -3209,25 +3059,10 @@ summaryInput.addEventListener('blur', () => {
   void saveSummaryNow();
 });
 
-if (fatigueYesBtn) {
-  fatigueYesBtn.addEventListener('click', () => {
-    void setDailyFatigueAnswer('yes');
-  });
-}
-
-if (fatigueNoBtn) {
-  fatigueNoBtn.addEventListener('click', () => {
-    void setDailyFatigueAnswer('no');
-  });
-}
-
-window.setInterval(() => {
-  renderDailyFatigueQuestion();
-}, 60 * 1000);
-
 // -------- Date module --------
 async function loadForDate() {
   await Promise.all([loadTodos(), loadSummaries()]);
+  renderWorkPunchTable(selectedDate);
 }
 
 if (datePrevBtn) {
@@ -3257,6 +3092,16 @@ if (datePicker) {
     if (datePicker.value) setSelectedDate(datePicker.value);
   });
 }
+
+if (workPunchBtns.length) {
+  workPunchBtns.forEach(button => {
+    button.addEventListener('click', () => {
+      recordWorkPunch(button.dataset.slot);
+    });
+  });
+}
+
+restoreWorkPunchRecords();
 
 setSelectedDate(selectedDate);
 
@@ -3298,6 +3143,7 @@ let assistTimerStarted = false;
 let assistTimerStartAt = 0;
 let assistTimerInterval = null;
 let assistTimerPresets = [2, 5, 10, 15, 20];
+let workPunchRecords = {};
 
 function getTimerTimelineSequence(dateStr) {
   const history = Array.isArray(timerTimelineByDate[dateStr]) ? timerTimelineByDate[dateStr] : [];
@@ -3882,6 +3728,54 @@ function restoreAssistTimerPresets() {
   renderAssistTimerPresets();
 }
 
+function restoreWorkPunchRecords() {
+  const value = readLocalJson(WORK_PUNCH_LOCAL_KEY);
+  workPunchRecords = value && typeof value === 'object' ? value : {};
+}
+
+function persistWorkPunchRecords() {
+  writeLocalJson(WORK_PUNCH_LOCAL_KEY, workPunchRecords);
+}
+
+function getWorkPunchRecord(dateStr = selectedDate) {
+  const record = workPunchRecords && typeof workPunchRecords === 'object'
+    ? workPunchRecords[dateStr]
+    : null;
+  return record && typeof record === 'object' ? record : {};
+}
+
+function renderWorkPunchTable(dateStr = selectedDate) {
+  const record = getWorkPunchRecord(dateStr);
+  [
+    'work1Start',
+    'work1End',
+    'work2Start',
+    'work2End',
+    'work3Start',
+    'work3End'
+  ].forEach(slot => {
+    const cell = document.getElementById(`work-punch-${slot}`);
+    if (!cell) return;
+    cell.textContent = typeof record[slot] === 'string' && record[slot] ? record[slot] : '-';
+  });
+}
+
+function recordWorkPunch(slot) {
+  if (!slot) return;
+  const now = new Date();
+  const timeText = `${padTimePart(now.getHours())}:${padTimePart(now.getMinutes())}`;
+  const current = getWorkPunchRecord(selectedDate);
+  workPunchRecords = {
+    ...workPunchRecords,
+    [selectedDate]: {
+      ...current,
+      [slot]: timeText
+    }
+  };
+  persistWorkPunchRecords();
+  renderWorkPunchTable(selectedDate);
+}
+
 function clearAssistTimerTicking() {
   if (!assistTimerInterval) return;
   clearInterval(assistTimerInterval);
@@ -4382,7 +4276,6 @@ window.addEventListener('visibilitychange', () => {
     void settlePreviousDayIfNeeded();
     if (syncReady) {
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
     }
   }
 });
@@ -4445,7 +4338,6 @@ const initPromise = initSync({
     void restoreTimerTimeline();
     loadRecurrenceRules();
     void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-    void syncDailyFatigueAnswersFromCloud();
     if (updatedDates.has(selectedDate)) {
       loadForDate();
     }
@@ -4459,21 +4351,18 @@ initPromise.then(result => {
   void syncRegretCoinLedgerFromCloud()
     .then(() => reconcileSettlementRewardsFromCloud())
     .then(() => settlePreviousDayIfNeeded());
-  void syncDailyFatigueAnswersFromCloud();
   if (pendingChangeSync) {
     void flushChangeSync();
   } else {
     setTimeout(() => {
       syncNow();
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
     }, 1200);
   }
   setInterval(() => {
     if (syncReady) {
       syncNow();
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
       void settlePreviousDayIfNeeded({ force: true });
     }
   }, 5 * 60 * 1000);
@@ -4484,7 +4373,6 @@ if (syncBtn) {
     if (syncReady) {
       syncNow();
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
       void settlePreviousDayIfNeeded({ force: true });
     }
   });
@@ -4495,7 +4383,6 @@ if (syncPullBtn) {
     if (syncReady) {
       pullNow();
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
       void settlePreviousDayIfNeeded({ force: true });
     }
   });
@@ -4506,7 +4393,6 @@ if (syncFullBtn) {
     if (syncReady) {
       syncAllLocalToCloud();
       void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
       void settlePreviousDayIfNeeded({ force: true });
     }
   });
@@ -4516,7 +4402,6 @@ window.addEventListener('online', () => {
   if (syncReady) {
     syncNow();
     void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-    void syncDailyFatigueAnswersFromCloud();
     void settlePreviousDayIfNeeded({ force: true });
   }
 });

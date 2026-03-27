@@ -300,33 +300,52 @@
       </div>
       <div id="contribution-chart" class="contribution-chart" aria-label="固定半年评分热力图"></div>
     </div>
-    <div id="daily-fatigue-card" class="contribution-card summary-question-card" aria-label="今日疲惫提问">
-      <p class="summary-question-title">你今天累吗</p>
-      <div class="summary-question-actions" role="group" aria-label="你今天累吗">
-        <button id="fatigue-yes-btn" class="summary-question-btn" type="button" data-answer="yes" aria-pressed="false">
-          <span class="summary-question-btn-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M10 21h7.2c1.2 0 2.2-.8 2.5-2l1.2-5.4c.3-1.5-.8-2.9-2.3-2.9H14V6.8c0-1.2-.5-2.4-1.4-3.2L11 2 6.6 8.2C6.2 8.8 6 9.5 6 10.2V19c0 1.1.9 2 2 2h2Zm-6-1V10h2v10H4Z" />
-            </svg>
-          </span>
-          <span class="summary-question-btn-label">是</span>
-        </button>
-        <button id="fatigue-no-btn" class="summary-question-btn" type="button" data-answer="no" aria-pressed="false">
-          <span class="summary-question-btn-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M14 3H6.8c-1.2 0-2.2.8-2.5 2L3.1 10.4c-.3 1.5.8 2.9 2.3 2.9H10v3.9c0 1.2.5 2.4 1.4 3.2L13 22l4.4-6.2c.4-.6.6-1.3.6-2V5c0-1.1-.9-2-2-2h-2Zm6 1v10h-2V4h2Z" />
-            </svg>
-          </span>
-          <span class="summary-question-btn-label">否</span>
-        </button>
-      </div>
-    </div>
     <div class="contribution-card">
       <div class="contribution-header">
         <h3 id="task-status-title">2026年3月总结图</h3>
         <span id="task-status-summary" class="contribution-summary"></span>
       </div>
       <div id="task-status-chart" class="contribution-chart" aria-label="月份总结可视化图"></div>
+    </div>
+    <div class="contribution-card">
+      <div class="contribution-header">
+        <h3>工作打卡</h3>
+      </div>
+      <div class="work-punch-table-wrap">
+        <table class="work-punch-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work1Start">工作1开始</button></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work1End">工作1结束</button></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work2Start">工作2开始</button></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work2End">工作2结束</button></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work3Start">工作3开始</button></th>
+              <th><button class="work-punch-head-btn" type="button" data-slot="work3End">工作3结束</button></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>规定时间</th>
+              <td>10:30</td>
+              <td>13:50</td>
+              <td>15:00</td>
+              <td>20:10</td>
+              <td>21:10</td>
+              <td>02:45</td>
+            </tr>
+            <tr>
+              <th>实际时间</th>
+              <td id="work-punch-work1Start">-</td>
+              <td id="work-punch-work1End">-</td>
+              <td id="work-punch-work2Start">-</td>
+              <td id="work-punch-work2End">-</td>
+              <td id="work-punch-work3Start">-</td>
+              <td id="work-punch-work3End">-</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </section>
   <section id="completed-module" class="completed-module hidden">
