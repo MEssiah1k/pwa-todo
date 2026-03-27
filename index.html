@@ -42,6 +42,33 @@
     </div>
   </section>
 
+  <section id="assist-timer-module">
+    <div class="assist-timer-card">
+      <div id="assist-timer-active" class="assist-timer-active hidden" aria-live="polite">
+        <div class="assist-timer-bar-row">
+          <div class="assist-timer-bar-wrap">
+            <div id="assist-timer-bar" class="assist-timer-bar"></div>
+          </div>
+          <span id="assist-timer-remaining" class="assist-timer-remaining">00:00</span>
+          <div class="assist-timer-actions">
+            <button id="assist-timer-toggle" type="button">暂停</button>
+            <button id="assist-timer-stop" type="button">结束</button>
+          </div>
+        </div>
+      </div>
+      <div class="assist-timer-header">
+        <div class="assist-timer-quick-actions" role="group" aria-label="快捷开启辅助倒计时">
+          <button class="assist-quick-btn" type="button" data-minutes="2">00:02:00</button>
+          <button class="assist-quick-btn" type="button" data-minutes="5">00:05:00</button>
+          <button class="assist-quick-btn" type="button" data-minutes="10">00:10:00</button>
+          <button class="assist-quick-btn" type="button" data-minutes="15">00:15:00</button>
+          <button class="assist-quick-btn" type="button" data-minutes="20">00:20:00</button>
+          <button class="assist-quick-btn" type="button" data-custom="true">自定义</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="date-module">
     <h2>日期</h2>
     <div class="date-row">
@@ -382,6 +409,23 @@
       <div class="prompt-actions">
         <button id="prompt-cancel" type="button" class="modal-close">取消</button>
         <button id="prompt-confirm" type="button" class="progress-btn prompt-confirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="assist-custom-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card assist-custom-card">
+      <div class="modal-header">
+        <h3>自定义辅助倒计时</h3>
+        <button id="assist-custom-close" type="button" class="modal-close">关闭</button>
+      </div>
+      <div class="assist-custom-body">
+        <label for="assist-custom-input">分钟数</label>
+        <input id="assist-custom-input" type="number" inputmode="numeric" min="1" step="1" placeholder="输入分钟数" />
+      </div>
+      <div class="prompt-actions">
+        <button id="assist-custom-cancel" type="button" class="modal-close">取消</button>
+        <button id="assist-custom-confirm" type="button" class="progress-btn prompt-confirm">开始</button>
       </div>
     </div>
   </div>

@@ -72,6 +72,11 @@ const promptModal = document.getElementById('prompt-modal');
 const promptMessage = document.getElementById('prompt-message');
 const promptCancelBtn = document.getElementById('prompt-cancel');
 const promptConfirmBtn = document.getElementById('prompt-confirm');
+const assistCustomModal = document.getElementById('assist-custom-modal');
+const assistCustomInput = document.getElementById('assist-custom-input');
+const assistCustomCloseBtn = document.getElementById('assist-custom-close');
+const assistCustomCancelBtn = document.getElementById('assist-custom-cancel');
+const assistCustomConfirmBtn = document.getElementById('assist-custom-confirm');
 const dailySettlementModal = document.getElementById('daily-settlement-modal');
 const dailySettlementBody = document.getElementById('daily-settlement-body');
 const dailySettlementCloseBtn = document.getElementById('daily-settlement-close');
@@ -133,6 +138,12 @@ const bgmStatusEl = document.getElementById('bgm-status');
 const timerVersionEl = document.getElementById('timer-version');
 const timerToggleBtn = document.getElementById('timer-toggle');
 const timerStopBtn = document.getElementById('timer-stop');
+const assistTimerActiveEl = document.getElementById('assist-timer-active');
+const assistTimerBarEl = document.getElementById('assist-timer-bar');
+const assistTimerRemainingEl = document.getElementById('assist-timer-remaining');
+const assistTimerToggleBtn = document.getElementById('assist-timer-toggle');
+const assistTimerStopBtn = document.getElementById('assist-timer-stop');
+const assistQuickBtns = Array.from(document.querySelectorAll('.assist-quick-btn'));
 const bgmFileInput = document.getElementById('bgm-file');
 const bgmToggleBtn = document.getElementById('bgm-toggle');
 const bgmModal = document.getElementById('bgm-modal');
@@ -155,6 +166,8 @@ const TIMER_TIMELINE_UPDATED_AT_META_KEY = 'timerTimelineUpdatedAt';
 const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt';
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
 const TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerState');
+const ASSIST_TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerState');
+const ASSIST_TIMER_PRESETS_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerPresets');
 const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
 const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
 const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
@@ -195,6 +208,7 @@ let timelineEditingDate = '';
 let timelineEditingDraft = [];
 let timelineEditingInitialSnapshot = '';
 let promptResolver = null;
+let assistCustomResolver = null;
 let regretCoinStatusTimer = null;
 let daySettlementTimer = null;
 let contributionResizeRaf = 0;
@@ -332,6 +346,30 @@ function openPromptModal(message, options = {}) {
   promptModal.classList.remove('hidden');
   return new Promise(resolve => {
     promptResolver = resolve;
+  });
+}
+
+function resolveAssistCustomModal(result) {
+  if (!assistCustomResolver) return;
+  const resolver = assistCustomResolver;
+  assistCustomResolver = null;
+  if (assistCustomModal) assistCustomModal.classList.add('hidden');
+  resolver(result);
+}
+
+function openAssistCustomModal(defaultValue = '') {
+  if (!assistCustomModal || !assistCustomInput || !assistCustomConfirmBtn || !assistCustomCancelBtn) {
+    return Promise.resolve(null);
+  }
+  if (assistCustomResolver) resolveAssistCustomModal(null);
+  assistCustomInput.value = defaultValue;
+  assistCustomModal.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    assistCustomInput.focus();
+    assistCustomInput.select();
+  });
+  return new Promise(resolve => {
+    assistCustomResolver = resolve;
   });
 }
 
@@ -3253,6 +3291,13 @@ let audioContext = null;
 let lastPersistAt = 0;
 let ownsTimerLease = false;
 let timerLeaseInterval = null;
+let assistTimerDurationMs = 0;
+let assistTimerRemainingMs = 0;
+let assistTimerRunning = false;
+let assistTimerStarted = false;
+let assistTimerStartAt = 0;
+let assistTimerInterval = null;
+let assistTimerPresets = [2, 5, 10, 15, 20];
 
 function getTimerTimelineSequence(dateStr) {
   const history = Array.isArray(timerTimelineByDate[dateStr]) ? timerTimelineByDate[dateStr] : [];
@@ -3754,10 +3799,232 @@ function playRestEndAlarm() {
   }
 }
 
+function playAssistEndAlarm() {
+  try {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const gainValue = Math.max(0.04, Math.min(0.28, alarmVolumeRatio * 1.4));
+    const startAt = audioContext.currentTime + 0.02;
+    const notes = [
+      { freq: 880, offset: 0, durationMs: 180 },
+      { freq: 1174.66, offset: 0.24, durationMs: 180 },
+      { freq: 1567.98, offset: 0.48, durationMs: 260 }
+    ];
+    notes.forEach(note => {
+      playToneWithFade(note.freq, startAt + note.offset, note.durationMs, gainValue);
+    });
+  } catch (err) {
+    // 静默降级
+  }
+}
+
 function setAlarmVolumePercent(value) {
   const parsed = Number(value);
   const safe = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 15;
   alarmVolumeRatio = safe / 100;
+}
+
+function formatAssistTimerText(remainingMs) {
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatAssistPresetLabel(minutes) {
+  const totalMinutes = Math.max(1, Math.floor(Number(minutes) || 0));
+  const hours = Math.floor(totalMinutes / 60);
+  const remainMinutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(remainMinutes).padStart(2, '0')}:00`;
+}
+
+function normalizeAssistTimerPresets(value) {
+  const list = Array.isArray(value) ? value : [];
+  const normalized = [];
+  list.forEach(item => {
+    const minutes = Math.floor(Number(item));
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    if (normalized.includes(minutes)) return;
+    normalized.push(minutes);
+  });
+  const merged = [...normalized, ...[2, 5, 10, 15, 20].filter(item => !normalized.includes(item))];
+  return merged.slice(0, 5);
+}
+
+function persistAssistTimerPresets() {
+  writeLocalJson(ASSIST_TIMER_PRESETS_LOCAL_KEY, assistTimerPresets);
+}
+
+function renderAssistTimerPresets() {
+  if (!assistQuickBtns.length) return;
+  const presetButtons = assistQuickBtns.filter(button => button.dataset.custom !== 'true');
+  presetButtons.forEach((button, index) => {
+    const minutes = assistTimerPresets[index];
+    if (!Number.isFinite(minutes)) return;
+    button.dataset.minutes = String(minutes);
+    button.textContent = formatAssistPresetLabel(minutes);
+  });
+}
+
+function rememberAssistCustomPreset(minutes) {
+  const nextMinutes = Math.floor(Number(minutes));
+  if (!Number.isFinite(nextMinutes) || nextMinutes <= 0) return;
+  assistTimerPresets = [nextMinutes, ...assistTimerPresets.filter(item => item !== nextMinutes)].slice(0, 5);
+  persistAssistTimerPresets();
+  renderAssistTimerPresets();
+}
+
+function restoreAssistTimerPresets() {
+  assistTimerPresets = normalizeAssistTimerPresets(readLocalJson(ASSIST_TIMER_PRESETS_LOCAL_KEY));
+  renderAssistTimerPresets();
+}
+
+function clearAssistTimerTicking() {
+  if (!assistTimerInterval) return;
+  clearInterval(assistTimerInterval);
+  assistTimerInterval = null;
+}
+
+function persistAssistTimerState() {
+  const value = {
+    durationMs: assistTimerDurationMs,
+    remainingMs: assistTimerRunning
+      ? Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt))
+      : assistTimerRemainingMs,
+    running: assistTimerRunning,
+    started: assistTimerStarted,
+    startAt: assistTimerRunning ? Date.now() : null
+  };
+  writeLocalJson(ASSIST_TIMER_STATE_LOCAL_KEY, value.started ? value : null);
+}
+
+function updateAssistTimerUI() {
+  const remainingMs = assistTimerRunning
+    ? Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt))
+    : assistTimerRemainingMs;
+  const percent = assistTimerDurationMs > 0
+    ? Math.max(0, Math.min(1, remainingMs / assistTimerDurationMs))
+    : 0;
+
+  if (assistTimerActiveEl) assistTimerActiveEl.classList.toggle('hidden', !assistTimerStarted);
+  if (assistTimerBarEl) assistTimerBarEl.style.width = `${Math.round(percent * 100)}%`;
+  if (assistTimerRemainingEl) assistTimerRemainingEl.textContent = formatAssistTimerText(remainingMs);
+  if (assistTimerToggleBtn) {
+    assistTimerToggleBtn.textContent = assistTimerRunning ? '暂停' : '继续';
+  }
+  if (assistQuickBtns.length) {
+    assistQuickBtns.forEach(button => {
+      const buttonMinutes = Number(button.dataset.minutes);
+      const isPreset = Number.isFinite(buttonMinutes) && buttonMinutes > 0;
+      const isActive = isPreset &&
+        assistTimerStarted &&
+        Math.round(assistTimerDurationMs / 60000) === buttonMinutes;
+      button.classList.toggle('is-active', isActive);
+    });
+  }
+}
+
+function tickAssistTimer() {
+  if (!assistTimerRunning) return;
+  const remainingMs = Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt));
+  if (remainingMs <= 0) {
+    assistTimerRunning = false;
+    assistTimerStarted = false;
+    assistTimerRemainingMs = 0;
+    assistTimerDurationMs = 0;
+    clearAssistTimerTicking();
+    updateAssistTimerUI();
+    persistAssistTimerState();
+    playAssistEndAlarm();
+    return;
+  }
+  updateAssistTimerUI();
+}
+
+function ensureAssistTimerTicking() {
+  if (assistTimerInterval) return;
+  assistTimerInterval = setInterval(tickAssistTimer, 250);
+}
+
+function startAssistTimer(minutes) {
+  const parsed = Number(minutes);
+  if (!Number.isFinite(parsed) || parsed <= 0) return;
+  assistTimerDurationMs = Math.floor(parsed * 60 * 1000);
+  assistTimerRemainingMs = assistTimerDurationMs;
+  assistTimerRunning = true;
+  assistTimerStarted = true;
+  assistTimerStartAt = Date.now();
+  ensureAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function pauseAssistTimer() {
+  if (!assistTimerRunning) return;
+  assistTimerRemainingMs = Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt));
+  assistTimerRunning = false;
+  clearAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function resumeAssistTimer() {
+  if (!assistTimerStarted || assistTimerRunning || assistTimerRemainingMs <= 0) return;
+  assistTimerRunning = true;
+  assistTimerStartAt = Date.now();
+  ensureAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function stopAssistTimer() {
+  assistTimerRunning = false;
+  assistTimerStarted = false;
+  assistTimerDurationMs = 0;
+  assistTimerRemainingMs = 0;
+  assistTimerStartAt = 0;
+  clearAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function restoreAssistTimerState() {
+  const value = readLocalJson(ASSIST_TIMER_STATE_LOCAL_KEY);
+  if (!value || !value.started) {
+    updateAssistTimerUI();
+    return;
+  }
+  if (!Number.isFinite(value.durationMs) || !Number.isFinite(value.remainingMs) || value.durationMs <= 0 || value.remainingMs < 0) {
+    updateAssistTimerUI();
+    return;
+  }
+
+  assistTimerDurationMs = value.durationMs;
+  assistTimerRemainingMs = value.remainingMs;
+  assistTimerStarted = true;
+  assistTimerRunning = false;
+
+  if (value.running && Number.isFinite(value.startAt)) {
+    const remainingMs = Math.max(0, value.remainingMs - (Date.now() - value.startAt));
+    if (remainingMs > 0) {
+      assistTimerRemainingMs = remainingMs;
+      assistTimerRunning = true;
+      assistTimerStartAt = Date.now();
+      ensureAssistTimerTicking();
+    } else {
+      stopAssistTimer();
+      playAssistEndAlarm();
+      return;
+    }
+  }
+
+  updateAssistTimerUI();
+  persistAssistTimerState();
 }
 
 function updateTimerUI(remainingMs) {
@@ -4035,6 +4302,36 @@ if (timerToggleBtn) {
 }
 if (timerStopBtn) timerStopBtn.addEventListener('click', stopTimer);
 
+if (assistTimerToggleBtn) {
+  assistTimerToggleBtn.addEventListener('click', () => {
+    if (assistTimerRunning) pauseAssistTimer();
+    else resumeAssistTimer();
+  });
+}
+
+if (assistTimerStopBtn) {
+  assistTimerStopBtn.addEventListener('click', () => {
+    stopAssistTimer();
+  });
+}
+
+if (assistQuickBtns.length) {
+  assistQuickBtns.forEach(button => {
+    button.addEventListener('click', async () => {
+      if (button.dataset.custom === 'true') {
+        const input = await openAssistCustomModal('45');
+        if (input == null) return;
+        const minutes = Number(input);
+        if (!Number.isFinite(minutes) || minutes <= 0) return;
+        rememberAssistCustomPreset(minutes);
+        startAssistTimer(minutes);
+        return;
+      }
+      startAssistTimer(Number(button.dataset.minutes));
+    });
+  });
+}
+
 if (timerInlinePromptConfirmBtn) {
   timerInlinePromptConfirmBtn.addEventListener('click', () => {
     const action = timerInlinePromptAction;
@@ -4053,6 +4350,8 @@ updateTimerUI(timerRemainingMs);
 setTimerStatus('未开始');
 if (timerVersionEl) timerVersionEl.textContent = `版本 ${APP_VERSION}`;
 updateToggleLabel();
+restoreAssistTimerPresets();
+updateAssistTimerUI();
 bgm.init();
 renderBgmStatus(bgm.getPlaybackState());
 bgm.subscribePlaybackState(renderBgmStatus);
@@ -4273,6 +4572,41 @@ if (promptModal) {
   });
 }
 
+if (assistCustomCloseBtn) {
+  assistCustomCloseBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(null);
+  });
+}
+
+if (assistCustomCancelBtn) {
+  assistCustomCancelBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(null);
+  });
+}
+
+if (assistCustomConfirmBtn) {
+  assistCustomConfirmBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(assistCustomInput ? assistCustomInput.value.trim() : '');
+  });
+}
+
+if (assistCustomInput) {
+  assistCustomInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      resolveAssistCustomModal(assistCustomInput.value.trim());
+    }
+    if (event.key === 'Escape') {
+      resolveAssistCustomModal(null);
+    }
+  });
+}
+
+if (assistCustomModal) {
+  assistCustomModal.addEventListener('click', event => {
+    if (event.target === assistCustomModal) resolveAssistCustomModal(null);
+  });
+}
+
 if (dailySettlementCloseBtn) {
   dailySettlementCloseBtn.addEventListener('click', closeDailySettlementModal);
 }
@@ -4404,6 +4738,7 @@ async function restoreAlarmVolume() {
 }
 
 restoreAlarmVolume();
+restoreAssistTimerState();
 
 // -------- Service Worker --------
 if ('serviceWorker' in navigator) {
