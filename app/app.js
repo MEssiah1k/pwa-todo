@@ -185,7 +185,7 @@ let restoreInProgressPromise = null;
 const runningTimeEls = new Map();
 let runningTicker = null;
 let contributionScores = new Map();
-let taskCompletionStatusByDate = new Map();
+let taskSummaryStatusByDate = new Map();
 let timerTimelineByDate = {};
 let activeTimerSegment = null;
 let regretCoinLedger = [];
@@ -201,6 +201,9 @@ let contributionResizeRaf = 0;
 let contributionHalfKey = '';
 let contributionFollowCurrentHalf = true;
 let contributionLastCurrentHalfKey = '';
+let taskStatusMonthKey = '';
+let taskStatusFollowCurrentMonth = true;
+let taskStatusLastCurrentMonthKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 migrateLegacyLocalStorageKeys([
@@ -837,6 +840,24 @@ function formatContributionHalfTitle(period) {
   return `${period.year}${period.half === 1 ? '上' : '下'}半年热力图`;
 }
 
+function getContributionMonthPeriod(date = new Date()) {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  return {
+    year,
+    month,
+    key: `${year}-${String(month).padStart(2, '0')}`
+  };
+}
+
+function formatContributionMonthLabel(period) {
+  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+}
+
+function formatContributionMonthTitle(period) {
+  return `${period.year}年${period.month}月总结图`;
+}
+
 function getContributionHalfRange(period) {
   const startMonth = period.half === 1 ? 0 : 6;
   const endMonth = period.half === 1 ? 5 : 11;
@@ -858,6 +879,29 @@ function buildContributionHalfPeriods(today = new Date()) {
   return periods;
 }
 
+function getContributionMonthRange(period) {
+  return {
+    startDate: new Date(period.year, period.month - 1, 1),
+    endDate: new Date(period.year, period.month, 0)
+  };
+}
+
+function buildContributionMonthPeriods(today = new Date()) {
+  const current = getContributionMonthPeriod(today);
+  const periods = [];
+  for (let year = CONTRIBUTION_START_YEAR; year <= current.year; year += 1) {
+    const maxMonth = year === current.year ? current.month : 12;
+    for (let month = 1; month <= maxMonth; month += 1) {
+      periods.push({
+        year,
+        month,
+        key: `${year}-${String(month).padStart(2, '0')}`
+      });
+    }
+  }
+  return periods;
+}
+
 function getActiveContributionPeriod(periods, currentPeriod) {
   if (!periods.length) return null;
   if (
@@ -874,18 +918,49 @@ function getActiveContributionPeriod(periods, currentPeriod) {
   return periods.find(period => period.key === contributionHalfKey) || currentPeriod;
 }
 
+function getActiveTaskStatusMonth(periods, currentPeriod) {
+  if (!periods.length) return null;
+  if (
+    taskStatusFollowCurrentMonth &&
+    taskStatusLastCurrentMonthKey &&
+    taskStatusLastCurrentMonthKey !== currentPeriod.key
+  ) {
+    taskStatusMonthKey = currentPeriod.key;
+  }
+  taskStatusLastCurrentMonthKey = currentPeriod.key;
+  if (!taskStatusMonthKey || !periods.some(period => period.key === taskStatusMonthKey)) {
+    taskStatusMonthKey = currentPeriod.key;
+  }
+  return periods.find(period => period.key === taskStatusMonthKey) || currentPeriod;
+}
+
 function updateContributionCellSize(wrapper) {
   if (!wrapper) return;
-  const weekCount = Number(wrapper.style.getPropertyValue('--weeks'));
-  if (!Number.isFinite(weekCount) || weekCount <= 0) return;
+  const columnCount = Number(
+    wrapper.style.getPropertyValue('--contrib-columns') || wrapper.style.getPropertyValue('--weeks')
+  );
+  if (!Number.isFinite(columnCount) || columnCount <= 0) return;
   const styles = getComputedStyle(wrapper);
   const labelWidth = parseFloat(styles.getPropertyValue('--contrib-label-width')) || 24;
   const gap = parseFloat(styles.getPropertyValue('--contrib-gap')) || 2;
   const gridGap = parseFloat(styles.gap) || 6;
-  const chartWidth = wrapper.clientWidth;
-  const cellsWidth = Math.max(0, chartWidth - labelWidth - gridGap);
+  const isTransposed = wrapper.classList.contains('is-transposed');
+  let chartWidth = wrapper.clientWidth;
+  if (isTransposed && wrapper.parentElement) {
+    const layoutStyles = getComputedStyle(wrapper.parentElement);
+    const layoutGap = parseFloat(layoutStyles.gap) || 0;
+    const periods = wrapper.parentElement.querySelector('.contribution-periods');
+    const periodsWidth = periods ? periods.clientWidth : 0;
+    chartWidth = Math.max(chartWidth, wrapper.parentElement.clientWidth - periodsWidth - layoutGap);
+  }
+  const useLabelColumn = !isTransposed;
+  const cellsWidth = Math.max(0, chartWidth - (useLabelColumn ? labelWidth + gridGap : 0));
   const minSize = window.innerWidth <= 520 ? 8 : 10;
-  const size = Math.max(minSize, Math.floor((cellsWidth - gap * (weekCount - 1)) / weekCount));
+  const autoSize = Math.floor((cellsWidth - gap * (columnCount - 1)) / columnCount);
+  const maxSize = isTransposed
+    ? (window.innerWidth <= 520 ? 24 : 30)
+    : Number.POSITIVE_INFINITY;
+  const size = Math.max(minSize, Math.min(maxSize, autoSize));
   wrapper.style.setProperty('--contrib-cell-size', `${size}px`);
 }
 
@@ -1224,7 +1299,7 @@ function renderTodos() {
           ...todo,
           queued: false,
           queueOrder: null,
-          sortOrder: getLastPendingSortOrder() + 1,
+          sortOrder: getNextPendingSortOrder(),
           updatedAt: now
         });
       } else {
@@ -2000,9 +2075,8 @@ function renderTimerTimeline() {
 async function renderContributionChart() {
   if (!contributionChart && !taskStatusChart) return;
   const allSummaries = await getAllSummaries();
-  const allTodos = await getAllTodos();
   const latestByDate = new Map();
-  const todoStatusByDate = new Map();
+  const summaryTextStatusByDate = new Map();
 
   allSummaries
     .filter(summary => !summary.deletedAt)
@@ -2016,63 +2090,58 @@ async function renderContributionChart() {
       const rawRating = typeof summary.rating === 'number' ? summary.rating : 0;
       const level = Math.max(0, Math.min(10, Math.round(rawRating * 2)));
       latestByDate.set(summary.date, level);
-    });
-
-  allTodos
-    .filter(todo => !todo.deletedAt && todo.date)
-    .forEach(todo => {
-      const current = todoStatusByDate.get(todo.date) || { total: 0, completed: 0 };
-      current.total += 1;
-      if (todo.completed) current.completed += 1;
-      todoStatusByDate.set(todo.date, current);
+      const summaryText = typeof summary.text === 'string' ? summary.text.trim() : '';
+      summaryTextStatusByDate.set(summary.date, summaryText ? 'complete' : 'incomplete');
     });
 
   contributionScores = latestByDate;
-  taskCompletionStatusByDate = new Map(
-    [...todoStatusByDate.entries()].map(([date, status]) => [
-      date,
-      status.total > 0 && status.completed === status.total ? 'complete' : 'incomplete'
-    ])
-  );
+  taskSummaryStatusByDate = summaryTextStatusByDate;
 
-  const periods = buildContributionHalfPeriods(new Date());
-  const currentPeriod = getContributionHalfPeriod(new Date());
+  const focusPeriods = buildContributionHalfPeriods(new Date());
+  const focusCurrentPeriod = getContributionHalfPeriod(new Date());
+  const taskPeriods = buildContributionMonthPeriods(new Date());
+  const taskCurrentPeriod = getContributionMonthPeriod(new Date());
   const todayDateStr = formatDateLocal(new Date());
-  if (!periods.length) return;
-  const activePeriod = getActiveContributionPeriod(periods, currentPeriod);
-  if (!activePeriod) return;
+  if (!focusPeriods.length || !taskPeriods.length) return;
+  const activeFocusPeriod = getActiveContributionPeriod(focusPeriods, focusCurrentPeriod);
+  const activeTaskPeriod = getActiveTaskStatusMonth(taskPeriods, taskCurrentPeriod);
+  if (!activeFocusPeriod || !activeTaskPeriod) return;
 
-  const { startDate: firstDate, endDate } = getContributionHalfRange(activePeriod);
-  const gridStart = startOfWeekMonday(firstDate);
-  const diffDays = Math.round((endDate - gridStart) / 86400000);
-  const totalDays = diffDays + 1;
-  const weekCount = Math.ceil(totalDays / 7);
-
-  const buildChart = ({ chartEl, getCellData, includePeriodNav = false }) => {
+  const buildChart = ({ chartEl, getCellData, includePeriodNav = false, periods, currentPeriod, activePeriod, getRange, formatPeriodLabel, onPeriodChange, transpose = false }) => {
     if (!chartEl) return { countA: 0, countB: 0, countC: 0 };
+    const { startDate: firstDate, endDate } = getRange(activePeriod);
+    const gridStart = startOfWeekMonday(firstDate);
+    const diffDays = Math.round((endDate - gridStart) / 86400000);
+    const totalDays = diffDays + 1;
+    const weekCount = Math.ceil(totalDays / 7);
 
     const layout = document.createElement('div');
     layout.className = 'contribution-layout';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'contribution-grid';
+    if (transpose) wrapper.classList.add('is-transposed');
     wrapper.style.setProperty('--weeks', String(weekCount));
+    wrapper.style.setProperty('--contrib-columns', String(transpose ? 7 : weekCount));
 
-    const months = document.createElement('div');
-    months.className = 'contribution-months';
-    let lastLabeledMonth = null;
-    for (let week = 0; week < weekCount; week += 1) {
-      const monthLabel = document.createElement('span');
-      monthLabel.className = 'contribution-month';
-      const weekStart = shiftDate(gridStart, week * 7);
-      const columnDate = weekStart < firstDate ? firstDate : weekStart;
-      const monthKey = `${columnDate.getFullYear()}-${columnDate.getMonth()}`;
-      if (columnDate <= endDate && monthKey !== lastLabeledMonth) {
-        monthLabel.textContent = formatMonthShort(columnDate);
-        lastLabeledMonth = monthKey;
+    let months = null;
+    if (!transpose) {
+      months = document.createElement('div');
+      months.className = 'contribution-months';
+      let lastLabeledMonth = null;
+      for (let week = 0; week < weekCount; week += 1) {
+        const monthLabel = document.createElement('span');
+        monthLabel.className = 'contribution-month';
+        const weekStart = shiftDate(gridStart, week * 7);
+        const columnDate = weekStart < firstDate ? firstDate : weekStart;
+        const monthKey = `${columnDate.getFullYear()}-${columnDate.getMonth()}`;
+        if (columnDate <= endDate && monthKey !== lastLabeledMonth) {
+          monthLabel.textContent = formatMonthShort(columnDate);
+          lastLabeledMonth = monthKey;
+        }
+        monthLabel.style.gridColumn = String(week + 1);
+        months.appendChild(monthLabel);
       }
-      monthLabel.style.gridColumn = String(week + 1);
-      months.appendChild(monthLabel);
     }
 
     const weekdays = document.createElement('div');
@@ -2153,7 +2222,7 @@ async function renderContributionChart() {
       }
     }
 
-    wrapper.appendChild(months);
+    if (months) wrapper.appendChild(months);
     wrapper.appendChild(weekdays);
     wrapper.appendChild(cells);
     layout.appendChild(wrapper);
@@ -2169,13 +2238,10 @@ async function renderContributionChart() {
           button.type = 'button';
           button.className = 'contribution-period';
           if (period.key === activePeriod.key) button.classList.add('is-active');
-          button.textContent = formatContributionHalfLabel(period);
+          button.textContent = formatPeriodLabel(period);
           button.setAttribute('aria-pressed', period.key === activePeriod.key ? 'true' : 'false');
           button.addEventListener('click', () => {
-            if (contributionHalfKey === period.key) return;
-            contributionHalfKey = period.key;
-            contributionFollowCurrentHalf = period.key === currentPeriod.key;
-            void renderContributionChart();
+            onPeriodChange(period, currentPeriod);
           });
           periodNav.appendChild(button);
         });
@@ -2190,6 +2256,17 @@ async function renderContributionChart() {
   const focusStats = buildChart({
     chartEl: contributionChart,
     includePeriodNav: true,
+    periods: focusPeriods,
+    currentPeriod: focusCurrentPeriod,
+    activePeriod: activeFocusPeriod,
+    getRange: getContributionHalfRange,
+    formatPeriodLabel: formatContributionHalfLabel,
+    onPeriodChange: (period, currentPeriod) => {
+      if (contributionHalfKey === period.key) return;
+      contributionHalfKey = period.key;
+      contributionFollowCurrentHalf = period.key === currentPeriod.key;
+      void renderContributionChart();
+    },
     getCellData: dateStr => {
       const level = contributionScores.get(dateStr) ?? 0;
       return {
@@ -2204,32 +2281,42 @@ async function renderContributionChart() {
   const taskStats = buildChart({
     chartEl: taskStatusChart,
     includePeriodNav: true,
+    periods: taskPeriods,
+    currentPeriod: taskCurrentPeriod,
+    activePeriod: activeTaskPeriod,
+    getRange: getContributionMonthRange,
+    formatPeriodLabel: formatContributionMonthLabel,
+    onPeriodChange: (period, currentPeriod) => {
+      if (taskStatusMonthKey === period.key) return;
+      taskStatusMonthKey = period.key;
+      taskStatusFollowCurrentMonth = period.key === currentPeriod.key;
+      void renderContributionChart();
+    },
+    transpose: true,
     getCellData: dateStr => {
       const status = dateStr >= todayDateStr
         ? 'pending'
-        : (taskCompletionStatusByDate.get(dateStr) || 'empty');
+        : (taskSummaryStatusByDate.get(dateStr) || 'incomplete');
       const tooltipText = status === 'complete'
-        ? '\u4efb\u52a1\u5df2\u5168\u90e8\u5b8c\u6210'
+        ? '\u5df2\u5199\u4eca\u65e5\u603b\u7ed3'
         : status === 'incomplete'
-          ? '\u5b58\u5728\u672a\u5b8c\u6210\u4efb\u52a1'
-          : status === 'empty'
-            ? '\u5f53\u5929\u6ca1\u6709\u4efb\u52a1'
-            : '\u5f53\u5929\u5c1a\u672a\u7ed3\u675f';
+          ? '\u672a\u5199\u4eca\u65e5\u603b\u7ed3'
+          : '\u5f53\u5929\u5c1a\u672a\u7ed3\u675f';
       return {
         status,
         tooltip: `${formatTooltipDate(dateStr)}?${tooltipText}`,
         countA: status === 'complete' ? 1 : 0,
         countB: status === 'incomplete' ? 1 : 0,
-        countC: status === 'empty' ? 1 : 0
+        countC: status === 'pending' ? 1 : 0
       };
     }
   });
 
   if (contributionTitle) {
-    contributionTitle.textContent = formatContributionHalfTitle(activePeriod);
+    contributionTitle.textContent = formatContributionHalfTitle(activeFocusPeriod);
   }
   if (contributionChart) {
-    contributionChart.setAttribute('aria-label', formatContributionHalfTitle(activePeriod));
+    contributionChart.setAttribute('aria-label', formatContributionHalfTitle(activeFocusPeriod));
   }
   if (contributionSummary) {
     const recentDays = 15;
@@ -2241,13 +2328,13 @@ async function renderContributionChart() {
     contributionSummary.textContent = `最近${recentDays}天平均 ${(recentTotal / recentDays).toFixed(1)} 次`;
   }
   if (taskStatusTitle) {
-    taskStatusTitle.textContent = `${formatContributionHalfLabel(activePeriod)}\u4efb\u52a1\u5b8c\u6210\u56fe`;
+    taskStatusTitle.textContent = formatContributionMonthTitle(activeTaskPeriod);
   }
   if (taskStatusChart) {
-    taskStatusChart.setAttribute('aria-label', `${formatContributionHalfLabel(activePeriod)}\u4efb\u52a1\u5b8c\u6210\u60c5\u51b5\u56fe`);
+    taskStatusChart.setAttribute('aria-label', `${formatContributionMonthTitle(activeTaskPeriod)}\u53ef\u89c6\u5316\u56fe`);
   }
   if (taskStatusSummary) {
-    taskStatusSummary.textContent = `\u5168\u5b8c\u6210 ${taskStats.countA} \u5929\uff0c\u672a\u5b8c\u6210 ${taskStats.countB} \u5929\uff0c\u65e0\u4efb\u52a1 ${taskStats.countC} \u5929`;
+    taskStatusSummary.textContent = `已写 ${taskStats.countA} 天，未写 ${taskStats.countB} 天，未来 ${taskStats.countC} 天`;
   }
 }
 
