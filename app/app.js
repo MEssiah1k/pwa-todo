@@ -198,6 +198,7 @@ let taskSummaryStatusByDate = new Map();
 let timerTimelineByDate = {};
 let activeTimerSegment = null;
 let regretCoinLedger = [];
+let workPunchRecords = {};
 let timelineEditingSegmentId = null;
 let timelineEditingDate = '';
 let timelineEditingDraft = [];
@@ -3143,7 +3144,6 @@ let assistTimerStarted = false;
 let assistTimerStartAt = 0;
 let assistTimerInterval = null;
 let assistTimerPresets = [2, 5, 10, 15, 20];
-let workPunchRecords = {};
 
 function getTimerTimelineSequence(dateStr) {
   const history = Array.isArray(timerTimelineByDate[dateStr]) ? timerTimelineByDate[dateStr] : [];
