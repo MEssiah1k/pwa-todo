@@ -42,6 +42,9 @@ const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt'
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
 const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
 const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
+const WORK_PUNCH_LOCAL_KEY = createScopedStorageKey('pwaTodo.workPunchRecords');
+const WORK_PUNCH_REMOTE_KEY = 'work_punch_records';
+const TODO_QUEUE_STATE_REMOTE_KEY = 'todo_queue_state';
 const MAX_AUTO_DEDUPE_DELETE_COUNT = 50;
 const MAX_AUTO_DEDUPE_DELETE_RATIO = 0.3;
 
@@ -58,6 +61,27 @@ function getTodayDateStr() {
   return `${y}-${m}-${d}`;
 }
 const DEBUG = true;
+
+function readLocalJson(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeLocalJson(key, value) {
+  try {
+    if (value == null) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    }
+  } catch (err) {
+    // ignore
+  }
+}
 
 function generateUUID() {
   if (crypto && typeof crypto.randomUUID === 'function') {
@@ -274,8 +298,14 @@ export async function syncNow() {
     await overwriteRemoteRecurrenceRulesFromLocal();
     if (DEBUG) console.log('[sync] push timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
+    if (DEBUG) console.log('[sync] sync work punch');
+    const workPunchUpdatedDates = await syncWorkPunchRecords();
+    if (DEBUG) console.log('[sync] sync todo queue state');
+    const queueUpdatedDates = await syncTodoQueueState();
 
     dedupedAfterPull.forEach(date => updatedDates.add(date));
+    workPunchUpdatedDates.forEach(date => updatedDates.add(date));
+    queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
     setStatus('Idle', `last ${lastSyncAt}`);
@@ -301,6 +331,10 @@ export async function pushNow() {
     await overwriteRemoteRecurrenceRulesFromLocal();
     if (DEBUG) console.log('[sync] push-only timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
+    if (DEBUG) console.log('[sync] push-only work punch');
+    await syncWorkPunchRecords();
+    if (DEBUG) console.log('[sync] push-only todo queue state');
+    await syncTodoQueueState();
 
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
@@ -317,7 +351,11 @@ export async function pullNow() {
     setStatus('Syncing', 'pull only');
     const updatedDates = await pullRemoteChanges();
     const dedupedAfterPull = await dedupeLocalTodosByNameAndStatus();
+    const workPunchUpdatedDates = await syncWorkPunchRecords();
+    const queueUpdatedDates = await syncTodoQueueState();
     dedupedAfterPull.forEach(date => updatedDates.add(date));
+    workPunchUpdatedDates.forEach(date => updatedDates.add(date));
+    queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
     setStatus('Idle', `last ${lastSyncAt}`);
@@ -365,6 +403,10 @@ export async function syncAllLocalToCloud() {
     await overwriteRemoteRecurrenceRulesFromLocal(fullSyncUpdatedAt);
     if (DEBUG) console.log('[sync] full push timer timeline');
     await pushLocalTimerTimeline('1970-01-01T00:00:00.000Z', fullSyncUpdatedAt, true);
+    if (DEBUG) console.log('[sync] full push work punch');
+    await syncWorkPunchRecords(true);
+    if (DEBUG) console.log('[sync] full push todo queue state');
+    await syncTodoQueueState(true);
 
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
@@ -546,6 +588,178 @@ export async function insertRemoteKvIfAbsent(key, value, updatedAt = new Date().
   }
   if (isMissingTable(error, 'timer_timeline')) return false;
   throw error;
+}
+
+function normalizeWorkPunchRecords(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  Object.entries(source).forEach(([dateStr, record]) => {
+    if (!dateStr || !record || typeof record !== 'object') return;
+    const nextRecord = {};
+    Object.entries(record).forEach(([slot, slotValue]) => {
+      if (!slot) return;
+      if (typeof slotValue === 'string' && slotValue) {
+        nextRecord[slot] = { time: slotValue, updatedAt: '' };
+        return;
+      }
+      if (!slotValue || typeof slotValue !== 'object') return;
+      const time = typeof slotValue.time === 'string' ? slotValue.time : '';
+      if (!time) return;
+      nextRecord[slot] = {
+        time,
+        updatedAt: typeof slotValue.updatedAt === 'string' ? slotValue.updatedAt : ''
+      };
+    });
+    if (Object.keys(nextRecord).length) result[dateStr] = nextRecord;
+  });
+  return result;
+}
+
+function mergeWorkPunchRecords(localRecords, remoteRecords) {
+  const merged = {};
+  const allDates = new Set([
+    ...Object.keys(localRecords || {}),
+    ...Object.keys(remoteRecords || {})
+  ]);
+  allDates.forEach(dateStr => {
+    const localRecord = localRecords && localRecords[dateStr] ? localRecords[dateStr] : {};
+    const remoteRecord = remoteRecords && remoteRecords[dateStr] ? remoteRecords[dateStr] : {};
+    const slotResult = {};
+    const allSlots = new Set([...Object.keys(localRecord), ...Object.keys(remoteRecord)]);
+    allSlots.forEach(slot => {
+      const localValue = localRecord[slot];
+      const remoteValue = remoteRecord[slot];
+      if (!localValue && remoteValue) {
+        slotResult[slot] = remoteValue;
+        return;
+      }
+      if (localValue && !remoteValue) {
+        slotResult[slot] = localValue;
+        return;
+      }
+      if (!localValue && !remoteValue) return;
+      slotResult[slot] = (remoteValue.updatedAt || '') > (localValue.updatedAt || '')
+        ? remoteValue
+        : localValue;
+    });
+    if (Object.keys(slotResult).length) merged[dateStr] = slotResult;
+  });
+  return merged;
+}
+
+async function syncWorkPunchRecords(force = false) {
+  const updatedDates = new Set();
+  const localRecords = normalizeWorkPunchRecords(readLocalJson(WORK_PUNCH_LOCAL_KEY));
+  const remoteRow = await fetchRemoteKv(WORK_PUNCH_REMOTE_KEY);
+  const remoteRecords = normalizeWorkPunchRecords(remoteRow && remoteRow.value ? remoteRow.value.records : {});
+  const mergedRecords = mergeWorkPunchRecords(localRecords, remoteRecords);
+  const localSnapshot = JSON.stringify(localRecords);
+  const remoteSnapshot = JSON.stringify(remoteRecords);
+  const mergedSnapshot = JSON.stringify(mergedRecords);
+  if (localSnapshot !== mergedSnapshot) {
+    writeLocalJson(WORK_PUNCH_LOCAL_KEY, mergedRecords);
+    Object.keys(mergedRecords).forEach(dateStr => updatedDates.add(dateStr));
+  }
+  const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
+  const newestLocalUpdatedAt = Object.values(mergedRecords)
+    .flatMap(record => Object.values(record))
+    .map(item => item.updatedAt || '')
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || new Date().toISOString();
+  if (force || remoteSnapshot !== mergedSnapshot || remoteUpdatedAt < newestLocalUpdatedAt) {
+    await upsertRemoteKv(WORK_PUNCH_REMOTE_KEY, { records: mergedRecords }, newestLocalUpdatedAt);
+  }
+  return updatedDates;
+}
+
+function buildTodoQueueStateMap(todos) {
+  const result = {};
+  todos.forEach(todo => {
+    if (!todo || !todo.uuid) return;
+    result[todo.uuid] = {
+      queued: Boolean(todo.queued),
+      queueOrder: Number.isFinite(todo.queueOrder) ? todo.queueOrder : null,
+      sortOrder: Number.isFinite(todo.sortOrder) ? todo.sortOrder : null,
+      updatedAt: todo.updatedAt || todo.createdAt || '',
+      deletedAt: todo.deletedAt || null,
+      completed: Boolean(todo.completed)
+    };
+  });
+  return result;
+}
+
+function mergeTodoQueueState(localState, remoteState) {
+  const merged = {};
+  const allIds = new Set([
+    ...Object.keys(localState || {}),
+    ...Object.keys(remoteState || {})
+  ]);
+  allIds.forEach(uuid => {
+    const localValue = localState && localState[uuid] ? localState[uuid] : null;
+    const remoteValue = remoteState && remoteState[uuid] ? remoteState[uuid] : null;
+    if (!localValue && remoteValue) {
+      merged[uuid] = remoteValue;
+      return;
+    }
+    if (localValue && !remoteValue) {
+      merged[uuid] = localValue;
+      return;
+    }
+    if (!localValue && !remoteValue) return;
+    merged[uuid] = (remoteValue.updatedAt || '') > (localValue.updatedAt || '')
+      ? remoteValue
+      : localValue;
+  });
+  return merged;
+}
+
+async function syncTodoQueueState(force = false) {
+  const updatedDates = new Set();
+  const todos = await getAllTodos();
+  const localState = buildTodoQueueStateMap(todos);
+  const remoteRow = await fetchRemoteKv(TODO_QUEUE_STATE_REMOTE_KEY);
+  const remoteState = remoteRow && remoteRow.value && typeof remoteRow.value.state === 'object'
+    ? remoteRow.value.state
+    : {};
+  const mergedState = mergeTodoQueueState(localState, remoteState);
+
+  const localByUuid = new Map(todos.filter(todo => todo && todo.uuid).map(todo => [todo.uuid, todo]));
+  await Promise.all(
+    Object.entries(mergedState).map(async ([uuid, state]) => {
+      const localTodo = localByUuid.get(uuid);
+      if (!localTodo) return;
+      if ((state.updatedAt || '') <= (localTodo.updatedAt || '')) return;
+      const nextTodo = {
+        ...localTodo,
+        queued: Boolean(state.queued),
+        queueOrder: state.queueOrder ?? null,
+        sortOrder: state.sortOrder ?? null,
+        updatedAt: state.updatedAt || localTodo.updatedAt
+      };
+      if (
+        Boolean(localTodo.queued) === Boolean(nextTodo.queued) &&
+        (localTodo.queueOrder ?? null) === (nextTodo.queueOrder ?? null) &&
+        (localTodo.sortOrder ?? null) === (nextTodo.sortOrder ?? null)
+      ) {
+        return;
+      }
+      await updateTodo(nextTodo);
+      if (nextTodo.date) updatedDates.add(nextTodo.date);
+    })
+  );
+
+  const mergedSnapshot = JSON.stringify(mergedState);
+  const remoteSnapshot = JSON.stringify(remoteState || {});
+  const newestUpdatedAt = Object.values(mergedState)
+    .map(item => item && item.updatedAt ? item.updatedAt : '')
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || new Date().toISOString();
+  if (force || mergedSnapshot !== remoteSnapshot || (remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '') < newestUpdatedAt) {
+    await upsertRemoteKv(TODO_QUEUE_STATE_REMOTE_KEY, { state: mergedState }, newestUpdatedAt);
+  }
+  return updatedDates;
 }
 
 function normalizeTimerTimelineManualOps(value) {
@@ -934,6 +1148,12 @@ function mergeTodoForPull(local, remote) {
   if (merged.sortOrder == null && local.sortOrder != null) {
     merged.sortOrder = local.sortOrder;
   }
+  if (merged.queued == null && local.queued != null) {
+    merged.queued = local.queued;
+  }
+  if (merged.queueOrder == null && local.queueOrder != null) {
+    merged.queueOrder = local.queueOrder;
+  }
   if (!merged.userId && local.userId) {
     merged.userId = local.userId;
   }
@@ -957,6 +1177,8 @@ function shouldUpdateTodo(local, next) {
     (local.recurrenceRuleId ?? null) !== (next.recurrenceRuleId ?? null) ||
     (local.dueMinutes ?? null) !== (next.dueMinutes ?? null) ||
     (local.carriedFrom ?? null) !== (next.carriedFrom ?? null) ||
+    Boolean(local.queued) !== Boolean(next.queued) ||
+    (local.queueOrder ?? null) !== (next.queueOrder ?? null) ||
     (local.sortOrder ?? null) !== (next.sortOrder ?? null) ||
     (local.userId ?? null) !== (next.userId ?? null) ||
     (local.createdAt || '') !== (next.createdAt || '') ||

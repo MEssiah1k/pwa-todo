@@ -3063,6 +3063,7 @@ summaryInput.addEventListener('blur', () => {
 // -------- Date module --------
 async function loadForDate() {
   await Promise.all([loadTodos(), loadSummaries()]);
+  restoreWorkPunchRecords();
   renderWorkPunchTable(selectedDate);
 }
 
@@ -3756,7 +3757,11 @@ function renderWorkPunchTable(dateStr = selectedDate) {
   ].forEach(slot => {
     const cell = document.getElementById(`work-punch-${slot}`);
     if (!cell) return;
-    cell.textContent = typeof record[slot] === 'string' && record[slot] ? record[slot] : '-';
+    const value = record[slot];
+    const timeText = typeof value === 'string'
+      ? value
+      : (value && typeof value === 'object' && typeof value.time === 'string' ? value.time : '');
+    cell.textContent = timeText || '-';
   });
 }
 
@@ -3769,11 +3774,15 @@ function recordWorkPunch(slot) {
     ...workPunchRecords,
     [selectedDate]: {
       ...current,
-      [slot]: timeText
+      [slot]: {
+        time: timeText,
+        updatedAt: now.toISOString()
+      }
     }
   };
   persistWorkPunchRecords();
   renderWorkPunchTable(selectedDate);
+  triggerChangeSync();
 }
 
 function clearAssistTimerTicking() {
