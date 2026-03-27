@@ -3838,9 +3838,7 @@ function formatAssistTimerText(remainingMs) {
 
 function formatAssistPresetLabel(minutes) {
   const totalMinutes = Math.max(1, Math.floor(Number(minutes) || 0));
-  const hours = Math.floor(totalMinutes / 60);
-  const remainMinutes = totalMinutes % 60;
-  return `${String(hours).padStart(2, '0')}:${String(remainMinutes).padStart(2, '0')}:00`;
+  return `${String(totalMinutes).padStart(2, '0')}:00`;
 }
 
 function normalizeAssistTimerPresets(value) {
@@ -4327,7 +4325,10 @@ if (assistQuickBtns.length) {
         startAssistTimer(minutes);
         return;
       }
-      startAssistTimer(Number(button.dataset.minutes));
+      const minutes = Number(button.dataset.minutes);
+      if (!Number.isFinite(minutes) || minutes <= 0) return;
+      rememberAssistCustomPreset(minutes);
+      startAssistTimer(minutes);
     });
   });
 }
