@@ -1078,18 +1078,6 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
   }
 }
 
-function writeLocalJson(key, value) {
-  try {
-    if (value == null) {
-      window.localStorage.removeItem(key);
-      return;
-    }
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    // ignore local persistence failures
-  }
-}
-
 async function fetchAllRows(table) {
   const { data, error } = await fetchAllRowsWithError(table);
   if (error) throw error;
