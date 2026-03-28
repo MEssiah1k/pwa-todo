@@ -62,7 +62,7 @@ function getTodayDateStr() {
 }
 const DEBUG = true;
 
-function readLocalJson(key) {
+function readSyncLocalJson(key) {
   try {
     const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
@@ -71,7 +71,7 @@ function readLocalJson(key) {
   }
 }
 
-function writeLocalJson(key, value) {
+function writeSyncLocalJson(key, value) {
   try {
     if (value == null) {
       window.localStorage.removeItem(key);
@@ -649,7 +649,7 @@ function mergeWorkPunchRecords(localRecords, remoteRecords) {
 
 async function syncWorkPunchRecords(force = false) {
   const updatedDates = new Set();
-  const localRecords = normalizeWorkPunchRecords(readLocalJson(WORK_PUNCH_LOCAL_KEY));
+  const localRecords = normalizeWorkPunchRecords(readSyncLocalJson(WORK_PUNCH_LOCAL_KEY));
   const remoteRow = await fetchRemoteKv(WORK_PUNCH_REMOTE_KEY);
   const remoteRecords = normalizeWorkPunchRecords(remoteRow && remoteRow.value ? remoteRow.value.records : {});
   const mergedRecords = mergeWorkPunchRecords(localRecords, remoteRecords);
@@ -657,7 +657,7 @@ async function syncWorkPunchRecords(force = false) {
   const remoteSnapshot = JSON.stringify(remoteRecords);
   const mergedSnapshot = JSON.stringify(mergedRecords);
   if (localSnapshot !== mergedSnapshot) {
-    writeLocalJson(WORK_PUNCH_LOCAL_KEY, mergedRecords);
+    writeSyncLocalJson(WORK_PUNCH_LOCAL_KEY, mergedRecords);
     Object.keys(mergedRecords).forEach(dateStr => updatedDates.add(dateStr));
   }
   const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
@@ -1053,7 +1053,7 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
         : {};
       await setMeta(TIMER_TIMELINE_META_KEY, historyValue);
       await setMeta(TIMER_TIMELINE_UPDATED_AT_META_KEY, remoteUpdatedAt || new Date().toISOString());
-      writeLocalJson(TIMER_TIMELINE_LOCAL_KEY, historyValue);
+      writeSyncLocalJson(TIMER_TIMELINE_LOCAL_KEY, historyValue);
       Object.keys(historyValue).forEach(date => {
         if (date) updatedDates.add(date);
       });
@@ -1070,7 +1070,7 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
       const activeValue = activeRow.value ?? null;
       await setMeta(TIMER_TIMELINE_ACTIVE_META_KEY, activeValue);
       await setMeta(TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY, remoteUpdatedAt || new Date().toISOString());
-      writeLocalJson(TIMER_TIMELINE_ACTIVE_LOCAL_KEY, activeValue);
+      writeSyncLocalJson(TIMER_TIMELINE_ACTIVE_LOCAL_KEY, activeValue);
       if (activeValue && activeValue.date) {
         updatedDates.add(activeValue.date);
       }

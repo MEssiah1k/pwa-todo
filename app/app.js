@@ -15,12 +15,12 @@ import {
   updateRecurrenceRule,
   deleteRecurrenceRule,
   getTodosByRuleId
-} from './db.js?v=20260328-sync-fix-1';
-import * as bgm from './bgm.js?v=20260328-sync-fix-1';
+} from './db.js?v=20260328-sync-fix-2';
+import * as bgm from './bgm.js?v=20260328-sync-fix-2';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
-} from './storage-scope.js?v=20260328-sync-fix-1';
+} from './storage-scope.js?v=20260328-sync-fix-2';
 import {
   initSync,
   syncNow,
@@ -32,7 +32,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260328-sync-fix-1';
+} from './sync.js?v=20260328-sync-fix-2';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -4647,7 +4647,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260328-sync-fix-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260328-sync-fix-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
