@@ -1699,7 +1699,6 @@ async function loadSummaries() {
   summaryInput.value = latest ? latest.text : '';
   summaryRatingValue = latest && typeof latest.rating === 'number' ? latest.rating : 0;
   renderSummaryRating();
-  renderDailyFatigueQuestion();
   autoResizeSummary();
   renderTimerTimeline();
   await renderContributionChart();
