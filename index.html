@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PWA Todo</title>
-  <link rel="stylesheet" href="style.css?v=20260328-sync-fix-2" />
-  <link rel="manifest" href="app/manifest.json?v=20260328-sync-fix-2" />
+  <link rel="stylesheet" href="style.css?v=20260330-problem-review-1" />
+  <link rel="manifest" href="app/manifest.json?v=20260330-problem-review-1" />
 </head>
 <body class="dark">
   <button id="theme-toggle" class="theme-toggle" type="button" aria-label="切换主题">☾</button>
@@ -122,6 +122,7 @@
         <option value="Leisure">Leisure</option>
         <option value="Plan">Plan</option>
       </select>
+      <button id="problem-review-open" type="button" class="todo-side-btn">梳理问题</button>
     </div>
     <div id="todo-queue-panel" class="todo-queue-panel" aria-label="计划任务区">
       <ul id="todo-queue-list"></ul>
@@ -375,7 +376,7 @@
       <p class="regret-coin-hint">后悔币只能通过每日专注结算奖励获得。</p>
     </div>
   </section>
-  <script type="module" src="app/app.js?v=20260328-sync-fix-2"></script>
+  <script type="module" src="app/app.js?v=20260330-problem-review-1"></script>
   </div>
 
   <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
@@ -445,6 +446,24 @@
       <div class="prompt-actions">
         <button id="assist-custom-cancel" type="button" class="modal-close">取消</button>
         <button id="assist-custom-confirm" type="button" class="progress-btn prompt-confirm">开始</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="problem-review-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="problem-review-title">
+    <div class="modal-card problem-review-card">
+      <div class="modal-header">
+        <h3 id="problem-review-title">梳理问题</h3>
+        <button id="problem-review-close" type="button" class="modal-close">关闭</button>
+      </div>
+      <div id="problem-review-progress" class="problem-review-progress">问题 1 / 3</div>
+      <div id="problem-review-question" class="problem-review-question"></div>
+      <div class="problem-review-body">
+        <label for="problem-review-input">你的回答</label>
+        <input id="problem-review-input" type="text" placeholder="输入你的回答" />
+      </div>
+      <div class="prompt-actions">
+        <button id="problem-review-confirm" type="button" class="progress-btn prompt-confirm">确认</button>
       </div>
     </div>
   </div>

@@ -38,6 +38,7 @@ const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
 const dueInput = document.getElementById('todo-due');
 const todoFilterCategory = document.getElementById('todo-filter-category');
+const problemReviewOpenBtn = document.getElementById('problem-review-open');
 const todoQueuePanel = document.getElementById('todo-queue-panel');
 const todoQueueList = document.getElementById('todo-queue-list');
 const addBtn = document.getElementById('add-btn');
@@ -75,6 +76,12 @@ const assistCustomInput = document.getElementById('assist-custom-input');
 const assistCustomCloseBtn = document.getElementById('assist-custom-close');
 const assistCustomCancelBtn = document.getElementById('assist-custom-cancel');
 const assistCustomConfirmBtn = document.getElementById('assist-custom-confirm');
+const problemReviewModal = document.getElementById('problem-review-modal');
+const problemReviewCloseBtn = document.getElementById('problem-review-close');
+const problemReviewProgress = document.getElementById('problem-review-progress');
+const problemReviewQuestion = document.getElementById('problem-review-question');
+const problemReviewInput = document.getElementById('problem-review-input');
+const problemReviewConfirmBtn = document.getElementById('problem-review-confirm');
 const dailySettlementModal = document.getElementById('daily-settlement-modal');
 const dailySettlementBody = document.getElementById('daily-settlement-body');
 const dailySettlementCloseBtn = document.getElementById('daily-settlement-close');
@@ -205,6 +212,8 @@ let timelineEditingDraft = [];
 let timelineEditingInitialSnapshot = '';
 let promptResolver = null;
 let assistCustomResolver = null;
+let problemReviewStepIndex = 0;
+let problemReviewAnswers = [];
 let regretCoinStatusTimer = null;
 let daySettlementTimer = null;
 let contributionResizeRaf = 0;
@@ -215,6 +224,11 @@ let taskStatusMonthKey = '';
 let taskStatusFollowCurrentMonth = true;
 let taskStatusLastCurrentMonthKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const PROBLEM_REVIEW_QUESTIONS = [
+  '1. 我现在应该推进的主方向是什么？',
+  '2. 在这个方向里，最卡我的点是什么？',
+  '3. 我现在能做的最小一步是什么？'
+];
 
 migrateLegacyLocalStorageKeys([
   'pwaTodo.timerState',
@@ -367,6 +381,127 @@ function openAssistCustomModal(defaultValue = '') {
   return new Promise(resolve => {
     assistCustomResolver = resolve;
   });
+}
+
+function closeProblemReviewModal(reset = true) {
+  if (problemReviewModal) problemReviewModal.classList.add('hidden');
+  if (!reset) return;
+  problemReviewStepIndex = 0;
+  problemReviewAnswers = [];
+  if (problemReviewInput) problemReviewInput.value = '';
+}
+
+function renderProblemReviewStep() {
+  if (!problemReviewProgress || !problemReviewQuestion || !problemReviewInput) return;
+  const question = PROBLEM_REVIEW_QUESTIONS[problemReviewStepIndex] || '';
+  problemReviewProgress.textContent = `问题 ${problemReviewStepIndex + 1} / ${PROBLEM_REVIEW_QUESTIONS.length}`;
+  problemReviewQuestion.textContent = question;
+  problemReviewInput.value = problemReviewAnswers[problemReviewStepIndex] || '';
+  requestAnimationFrame(() => {
+    problemReviewInput.focus();
+    problemReviewInput.select();
+  });
+}
+
+function openProblemReviewModal() {
+  if (!problemReviewModal || !problemReviewInput) return;
+  problemReviewStepIndex = 0;
+  problemReviewAnswers = [];
+  problemReviewModal.classList.remove('hidden');
+  renderProblemReviewStep();
+}
+
+function submitProblemReviewStep() {
+  if (!problemReviewInput) return;
+  const answer = problemReviewInput.value.trim();
+  if (!answer) {
+    setStatus('请输入回答');
+    problemReviewInput.focus();
+    return;
+  }
+  problemReviewAnswers[problemReviewStepIndex] = answer;
+  if (problemReviewStepIndex >= PROBLEM_REVIEW_QUESTIONS.length - 1) {
+    void completeProblemReview();
+    return;
+  }
+  problemReviewStepIndex += 1;
+  renderProblemReviewStep();
+}
+
+function buildProblemReviewSummaryBlock(answers) {
+  return [
+    '【梳理问题】',
+    `1. 我现在应该推进的主方向是什么？`,
+    answers[0] || '',
+    '',
+    `2. 在这个方向里，最卡我的点是什么？`,
+    answers[1] || '',
+    '',
+    `3. 我现在能做的最小一步是什么？`,
+    answers[2] || ''
+  ].join('\n');
+}
+
+async function appendProblemReviewToTodaySummary(answers) {
+  const today = getTodayDateStr();
+  const now = new Date().toISOString();
+  const block = buildProblemReviewSummaryBlock(answers);
+  const todaySummaries = await getSummariesByDate(today);
+  const existing = todaySummaries
+    .filter(summary => !summary.deletedAt)
+    .sort((a, b) => {
+      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
+      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
+      return bTime - aTime;
+    })[0];
+
+  if (existing) {
+    const baseText = typeof existing.text === 'string' ? existing.text.trim() : '';
+    const nextText = baseText ? `${baseText}\n\n${block}` : block;
+    const nextSummary = {
+      ...existing,
+      text: nextText,
+      updatedAt: now,
+      deletedAt: null
+    };
+    await updateSummary(nextSummary);
+    if (selectedDate === today) {
+      summaries = summaries.map(summary =>
+        summary.id === nextSummary.id ? nextSummary : summary
+      );
+      summaryInput.value = nextText;
+      autoResizeSummary();
+    }
+  } else {
+    const initResult = syncInitPromise ? await syncInitPromise : null;
+    const userId = currentUserId ||
+      (initResult && initResult.userId ? initResult.userId : ensureUserId());
+    const nextSummary = {
+      date: today,
+      text: block,
+      rating: 0,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      uuid: generateUUID(),
+      userId
+    };
+    const id = await addSummary(nextSummary);
+    if (selectedDate === today) {
+      summaries = [...summaries, { ...nextSummary, id }];
+      summaryInput.value = block;
+      autoResizeSummary();
+    }
+  }
+  triggerChangeSync();
+  await renderContributionChart();
+}
+
+async function completeProblemReview() {
+  const answers = [...problemReviewAnswers];
+  closeProblemReviewModal(true);
+  await appendProblemReviewToTodaySummary(answers);
+  setStatus('已完成梳理问题，并追加到今日总结');
 }
 
 function getYesterdayDateStr(baseDateStr = formatDateLocal(new Date())) {
@@ -934,9 +1069,75 @@ async function migrateMissingTodoDates() {
   if (missingDateTodos.length) triggerChangeSync();
 }
 
+function normalizeTodoName(text) {
+  return typeof text === 'string' ? text.trim() : '';
+}
+
+function compareTodoKeepPriority(a, b) {
+  const aCompleted = Boolean(a && a.completed);
+  const bCompleted = Boolean(b && b.completed);
+  if (aCompleted !== bCompleted) return aCompleted ? -1 : 1;
+  const aUpdated = a.updatedAt || a.createdAt || '';
+  const bUpdated = b.updatedAt || b.createdAt || '';
+  if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+  const aCreated = a.createdAt || '';
+  const bCreated = b.createdAt || '';
+  if (aCreated !== bCreated) return bCreated.localeCompare(aCreated);
+  return (b.id || 0) - (a.id || 0);
+}
+
+async function hasTodoWithSameText(date, text, excludeId = null) {
+  const normalizedText = normalizeTodoName(text);
+  if (!date || !normalizedText) return false;
+  const sameDateTodos = await getTodosByDate(date);
+  return sameDateTodos.some(todo =>
+    todo &&
+    !todo.deletedAt &&
+    todo.id !== excludeId &&
+    normalizeTodoName(todo.text) === normalizedText
+  );
+}
+
+async function dedupeTodosForDate(date) {
+  if (!date) return false;
+  const sameDateTodos = await getTodosByDate(date);
+  const groups = new Map();
+  const now = new Date().toISOString();
+  const duplicates = [];
+
+  sameDateTodos.forEach(todo => {
+    if (!todo || todo.deletedAt) return;
+    const key = normalizeTodoName(todo.text);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(todo);
+  });
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort(compareTodoKeepPriority);
+    duplicates.push(...group.slice(1));
+  }
+
+  if (!duplicates.length) return false;
+
+  await Promise.all(
+    duplicates.map(todo =>
+      updateTodo({
+        ...todo,
+        deletedAt: now,
+        updatedAt: now
+      })
+    )
+  );
+  triggerChangeSync();
+  return true;
+}
+
 async function loadTodos() {
   if (restoreInProgressPromise) await restoreInProgressPromise;
   await migrateMissingTodoDates();
+  await dedupeTodosForDate(selectedDate);
   await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
   todos = await ensurePendingTodoOrders(todos);
@@ -1007,6 +1208,12 @@ async function moveTodoToTomorrow(todo) {
   const sourceDate = todo.date || selectedDate;
   const tomorrowDate = formatDateLocal(shiftDate(parseDateLocal(sourceDate), 1));
   const now = new Date().toISOString();
+  const hasDuplicateTomorrow = await hasTodoWithSameText(tomorrowDate, todo.text, todo.id);
+
+  if (hasDuplicateTomorrow) {
+    setStatus('明天已存在同名未完成任务，未重复移动');
+    return false;
+  }
 
   await updateTodo({
     ...todo,
@@ -1649,9 +1856,14 @@ addBtn.onclick = async () => {
   const initResult = syncInitPromise ? await syncInitPromise : null;
   const userId = currentUserId ||
     (initResult && initResult.userId ? initResult.userId : ensureUserId());
+  const nextText = formatTodoText(todoCategory ? todoCategory.value : 'Work', text);
+  if (await hasTodoWithSameText(selectedDate, nextText)) {
+    setStatus('同一天已存在同名任务');
+    return;
+  }
   await addTodo({
     date: selectedDate,
-    text: formatTodoText(todoCategory ? todoCategory.value : 'Work', text),
+    text: nextText,
     completed: false,
     queued: false,
     queueOrder: null,
@@ -4501,6 +4713,41 @@ if (assistCustomModal) {
   });
 }
 
+if (problemReviewOpenBtn) {
+  problemReviewOpenBtn.addEventListener('click', () => {
+    openProblemReviewModal();
+  });
+}
+
+if (problemReviewCloseBtn) {
+  problemReviewCloseBtn.addEventListener('click', () => {
+    closeProblemReviewModal(true);
+  });
+}
+
+if (problemReviewConfirmBtn) {
+  problemReviewConfirmBtn.addEventListener('click', () => {
+    submitProblemReviewStep();
+  });
+}
+
+if (problemReviewInput) {
+  problemReviewInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      submitProblemReviewStep();
+    }
+    if (event.key === 'Escape') {
+      closeProblemReviewModal(true);
+    }
+  });
+}
+
+if (problemReviewModal) {
+  problemReviewModal.addEventListener('click', event => {
+    if (event.target === problemReviewModal) closeProblemReviewModal(true);
+  });
+}
+
 if (dailySettlementCloseBtn) {
   dailySettlementCloseBtn.addEventListener('click', closeDailySettlementModal);
 }
@@ -4647,7 +4894,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260328-sync-fix-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260330-problem-review-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

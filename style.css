@@ -455,6 +455,11 @@ h2 {
   padding: 20px 18px 18px;
 }
 
+.problem-review-card {
+  width: min(480px, 92vw);
+  padding: 20px 18px 18px;
+}
+
 .assist-custom-body {
   display: flex;
   flex-direction: column;
@@ -468,6 +473,40 @@ h2 {
 }
 
 #assist-custom-input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input);
+  color: var(--text);
+  font-size: 16px;
+}
+
+.problem-review-progress {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.problem-review-question {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+
+.problem-review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.problem-review-body label {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#problem-review-input {
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -818,7 +857,19 @@ section {
 
 .todo-filter-row {
   justify-content: flex-start;
+  align-items: center;
   margin: 2px 0 0;
+}
+
+.todo-side-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--btn) 78%, #d97706 22%);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .todo-list-header {
