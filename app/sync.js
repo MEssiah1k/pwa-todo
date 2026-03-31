@@ -171,6 +171,82 @@ function mapRecurrenceRuleFromRemote(row) {
   };
 }
 
+function normalizeRecurrenceWeekdays(weekdays) {
+  if (!Array.isArray(weekdays)) return '';
+  return [...weekdays]
+    .map(day => Number(day))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .join(',');
+}
+
+function getRecurrenceRuleFingerprint(rule) {
+  if (!rule) return '';
+  const text = typeof rule.text === 'string' ? rule.text.trim() : '';
+  return [
+    text,
+    rule.type || '',
+    normalizeRecurrenceWeekdays(rule.weekdays),
+    rule.day ?? '',
+    rule.month ?? '',
+    rule.interval ?? '',
+    rule.unit ?? ''
+  ].join('__');
+}
+
+function compareRecurrenceRuleForDedupe(a, b) {
+  const aUpdated = a.updatedAt || a.createdAt || '';
+  const bUpdated = b.updatedAt || b.createdAt || '';
+  if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+  const aDeleted = Boolean(a && a.deletedAt);
+  const bDeleted = Boolean(b && b.deletedAt);
+  if (aDeleted !== bDeleted) return aDeleted ? -1 : 1;
+  const aCreated = a.createdAt || '';
+  const bCreated = b.createdAt || '';
+  if (aCreated !== bCreated) return bCreated.localeCompare(aCreated);
+  return (b.id || 0) - (a.id || 0);
+}
+
+function pickPreferredRecurrenceRules(rules) {
+  const groups = new Map();
+  for (const rule of rules) {
+    const fingerprint = getRecurrenceRuleFingerprint(rule);
+    if (!fingerprint) continue;
+    if (!groups.has(fingerprint)) groups.set(fingerprint, []);
+    groups.get(fingerprint).push(rule);
+  }
+
+  const preferredByFingerprint = new Map();
+  for (const [fingerprint, group] of groups.entries()) {
+    group.sort(compareRecurrenceRuleForDedupe);
+    preferredByFingerprint.set(fingerprint, group[0]);
+  }
+  return preferredByFingerprint;
+}
+
+export async function dedupeLocalRecurrenceRules() {
+  const rules = await getAllRecurrenceRules();
+  const preferredByFingerprint = pickPreferredRecurrenceRules(rules);
+  const now = new Date().toISOString();
+  let changed = false;
+
+  for (const rule of rules) {
+    const fingerprint = getRecurrenceRuleFingerprint(rule);
+    if (!fingerprint) continue;
+    const preferred = preferredByFingerprint.get(fingerprint);
+    if (!preferred || preferred.id === rule.id) continue;
+    if (rule.deletedAt) continue;
+    await updateRecurrenceRule({
+      ...rule,
+      deletedAt: now,
+      updatedAt: now
+    });
+    changed = true;
+  }
+
+  return changed;
+}
+
 function mapSummaryFromRemote(row) {
   return {
     uuid: row.uuid,
@@ -859,14 +935,17 @@ function compareTimerTimelineSegment(a, b) {
 
 async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
   await normalizeLocalData();
+  await dedupeLocalRecurrenceRules();
   const localRules = await getAllRecurrenceRules();
-  const localUuids = localRules
+  const preferredByFingerprint = pickPreferredRecurrenceRules(localRules);
+  const effectiveLocalRules = Array.from(preferredByFingerprint.values());
+  const localUuids = effectiveLocalRules
     .map(rule => rule && rule.uuid)
     .filter(Boolean);
 
-  if (DEBUG) console.log('[sync] local recurrence rules', localRules.length);
-  if (localRules.length) {
-    const payload = localRules.map(rule =>
+  if (DEBUG) console.log('[sync] local recurrence rules', effectiveLocalRules.length);
+  if (effectiveLocalRules.length) {
+    const payload = effectiveLocalRules.map(rule =>
       mapRecurrenceRuleToRemote(
         forcedUpdatedAt ? { ...rule, updatedAt: forcedUpdatedAt } : rule
       )
@@ -882,7 +961,7 @@ async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
 
   const { data: remoteRows, error: remoteListError } = await supabase
     .from('recurrence_rules')
-    .select('uuid');
+    .select('uuid, text, type, weekdays, day, month, interval, unit, created_at, updated_at, deleted_at');
   if (remoteListError) {
     if (isMissingRecurrenceTable(remoteListError)) return;
     throw remoteListError;
@@ -890,8 +969,15 @@ async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
 
   const localUuidSet = new Set(localUuids);
   const remoteOnlyUuids = (remoteRows || [])
-    .map(row => row && row.uuid)
-    .filter(uuid => uuid && !localUuidSet.has(uuid));
+    .map(row => mapRecurrenceRuleFromRemote(row))
+    .filter(rule => {
+      if (!rule || !rule.uuid) return false;
+      const fingerprint = getRecurrenceRuleFingerprint(rule);
+      const preferred = fingerprint ? preferredByFingerprint.get(fingerprint) : null;
+      if (preferred && preferred.uuid !== rule.uuid) return true;
+      return !localUuidSet.has(rule.uuid);
+    })
+    .map(rule => rule.uuid);
 
   if (!remoteOnlyUuids.length) return;
   if (DEBUG) console.log('[sync] delete remote-only recurrence rules', remoteOnlyUuids.length);
@@ -1019,6 +1105,7 @@ export async function pullRemoteChanges() {
         }
       }
     }
+    await dedupeLocalRecurrenceRules();
   }
 
   const { data: timerRows, error: timerPullError } = await fetchAllRowsWithError('timer_timeline');

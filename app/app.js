@@ -27,12 +27,13 @@ import {
   pushNow,
   pullNow,
   syncAllLocalToCloud,
+  dedupeLocalRecurrenceRules,
   getUserId,
   fetchRemoteKv,
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260328-sync-fix-2';
+} from './sync.js?v=20260331-recurrence-sync-fix-1';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -2450,6 +2451,7 @@ window.addEventListener('resize', () => {
 
 // -------- Recurrence rules --------
 async function loadRecurrenceRules() {
+  await dedupeLocalRecurrenceRules();
   recurrenceRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
   renderRecurrenceRules();
 }
@@ -4894,7 +4896,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260330-problem-review-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260331-recurrence-sync-fix-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
