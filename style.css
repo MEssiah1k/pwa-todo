@@ -1201,67 +1201,6 @@ section {
   margin-top: 18px;
 }
 
-.regret-coin-card {
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg);
-}
-
-.regret-coin-balance-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.regret-coin-label,
-.regret-coin-hint,
-.regret-coin-status {
-  color: var(--muted);
-}
-
-.regret-coin-balance {
-  font-size: 28px;
-  line-height: 1;
-  color: var(--text);
-}
-
-.regret-coin-status {
-  min-height: 20px;
-  margin: 10px 0 0;
-}
-
-.regret-coin-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-#regret-coin-spend-input {
-  width: 110px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--input);
-  color: var(--text);
-}
-
-#regret-coin-spend-btn {
-  padding: 10px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--btn);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.regret-coin-hint {
-  margin: 10px 0 0;
-  font-size: 13px;
-}
-
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -1726,11 +1665,6 @@ section {
     justify-content: flex-end;
   }
 
-  .regret-coin-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .assist-timer-header {
     flex-direction: column;
     align-items: stretch;
@@ -1756,13 +1690,6 @@ section {
     text-align: left;
   }
 
-  .regret-coin-balance {
-    font-size: 22px;
-  }
-
-  #regret-coin-spend-input {
-    width: 100%;
-  }
 }
 
 .timer-controls label {
