@@ -83,9 +83,6 @@ const problemReviewProgress = document.getElementById('problem-review-progress')
 const problemReviewQuestion = document.getElementById('problem-review-question');
 const problemReviewInput = document.getElementById('problem-review-input');
 const problemReviewConfirmBtn = document.getElementById('problem-review-confirm');
-const dailySettlementModal = document.getElementById('daily-settlement-modal');
-const dailySettlementBody = document.getElementById('daily-settlement-body');
-const dailySettlementCloseBtn = document.getElementById('daily-settlement-close');
 
 const datePrevBtn = document.getElementById('date-prev');
 const dateNextBtn = document.getElementById('date-next');
@@ -176,7 +173,6 @@ const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTim
 const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
 const TIMER_LEASE_TTL_MS = 4000;
 const TIMER_LEASE_HEARTBEAT_MS = 2000;
-const DAILY_SETTLEMENT_REMOTE_PREFIX = 'daily_settlement:';
 const NATURAL_DAY_META_KEY = 'lastKnownNaturalDate';
 
 let todos = [];
@@ -496,14 +492,6 @@ async function completeProblemReview() {
   setStatus('已完成梳理问题，并追加到今日总结');
 }
 
-function getYesterdayDateStr(baseDateStr = formatDateLocal(new Date())) {
-  return formatDateLocal(shiftDate(parseDateLocal(baseDateStr), -1));
-}
-
-function getDailySettlementKey(dateStr) {
-  return `${DAILY_SETTLEMENT_REMOTE_PREFIX}${dateStr}`;
-}
-
 function normalizeTodoPromptText(text) {
   return String(text || '')
     .trim()
@@ -515,95 +503,7 @@ function shouldPromptMorningWakeup(todo) {
   return normalizeTodoPromptText(todo && todo.text) === '刷牙2';
 }
 
-function getTodayFocusCount(dateStr) {
-  return getTimerTimelineSegmentsForDate(dateStr)
-    .filter(segment => !segment._active)
-    .length;
-}
-
-function getSettlementLevel(rating) {
-  const normalized = Number.isFinite(rating) ? rating : 0;
-  return Math.max(0, Math.min(10, Math.round(normalized * 2)));
-}
-
-function getSettlementAction(level) {
-  if (level < 2) {
-    return {
-      type: 'penalty',
-      text: '需要惩罚：400r投资'
-    };
-  }
-  if (level < 4) {
-    return {
-      type: 'penalty',
-      text: '需要惩罚：200r投资'
-    };
-  }
-  if (level < 6) {
-    return {
-      type: 'penalty',
-      text: '需要惩罚：100r投资'
-    };
-  }
-  return {
-    type: 'neutral',
-    text: '无惩罚'
-  };
-}
-
-function getSettlementEncouragement(level, actionType) {
-  if (actionType === 'penalty') return '今天没有达标，按规则执行惩罚，明天把节奏拉回来。';
-  if (level >= 6) return '今天达标了，明天继续把节奏稳住。';
-  return '先别找借口，明天至少把基础专注次数补回来。';
-}
-
-function buildDailySettlement(dateStr, rating, focusCount) {
-  const level = getSettlementLevel(rating);
-  const action = getSettlementAction(level);
-  return {
-    date: dateStr,
-    rating: Number.isFinite(rating) ? rating : 0,
-    level,
-    focusCount,
-    actionType: action.type,
-    actionText: action.text,
-    encouragement: getSettlementEncouragement(level, action.type),
-    settledAt: new Date().toISOString()
-  };
-}
-
-function openDailySettlementModal(settlement) {
-  if (!dailySettlementModal || !dailySettlementBody) {
-    window.alert([
-      `日期：${settlement.date}`,
-      `专注次数：${settlement.focusCount}`,
-      settlement.actionText,
-      `鼓励语：${settlement.encouragement}`
-    ].join('\n'));
-    return;
-  }
-  dailySettlementBody.innerHTML = '';
-  const lines = [
-    ['日期', settlement.date],
-    ['专注次数', `${settlement.focusCount}`],
-    ['星星等级', `${settlement.level}/10`],
-    ['结算结果', settlement.actionText],
-    ['鼓励语', settlement.encouragement]
-  ];
-  lines.forEach(([label, value], index) => {
-    const row = document.createElement(index === 3 ? 'div' : 'p');
-    if (index === 3) row.className = 'settlement-highlight';
-    row.innerHTML = `<span class="settlement-label">${label}：</span>${value}`;
-    dailySettlementBody.appendChild(row);
-  });
-  dailySettlementModal.classList.remove('hidden');
-}
-
-function closeDailySettlementModal() {
-  if (dailySettlementModal) dailySettlementModal.classList.add('hidden');
-}
-
-async function settlePreviousDayIfNeeded(options = {}) {
+async function syncNaturalDayState(options = {}) {
   const today = formatDateLocal(new Date());
   const inProgressRecord = readLocalJson(IN_PROGRESS_LOCAL_KEY);
   if (inProgressRecord && inProgressRecord.date && inProgressRecord.date !== today) {
@@ -619,30 +519,6 @@ async function settlePreviousDayIfNeeded(options = {}) {
 
   if (!options.force && lastKnownDay === today) return;
   await setMeta(NATURAL_DAY_META_KEY, today);
-
-  const targetDate = getYesterdayDateStr(today);
-  if (!targetDate) return;
-
-  const existingRemoteSettlement = await fetchRemoteKv(getDailySettlementKey(targetDate));
-  if (existingRemoteSettlement && existingRemoteSettlement.value) return;
-
-  const targetSummaries = await getSummariesByDate(targetDate);
-  const latestSummary = getLatestSummaryRecord(targetSummaries);
-  const rating = latestSummary && typeof latestSummary.rating === 'number' ? latestSummary.rating : 0;
-  const focusCount = getTodayFocusCount(targetDate);
-  const settlement = buildDailySettlement(targetDate, rating, focusCount);
-
-  const inserted = await insertRemoteKvIfAbsent(
-    getDailySettlementKey(targetDate),
-    settlement,
-    settlement.settledAt
-  );
-
-  if (!inserted) {
-    return;
-  }
-
-  openDailySettlementModal(settlement);
 }
 
 function getContributionHalfPeriod(date = new Date()) {
@@ -4284,14 +4160,14 @@ window.addEventListener('storage', event => {
 window.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     updateTimerLease();
-    void settlePreviousDayIfNeeded();
+    void syncNaturalDayState();
   }
 });
 window.addEventListener('pagehide', () => {
   if (ownsTimerLease) releaseTimerLease();
 });
 daySettlementTimer = window.setInterval(() => {
-  void settlePreviousDayIfNeeded();
+  void syncNaturalDayState();
 }, 60 * 1000);
 if (bgmCurrentName) bgmCurrentName.textContent = bgmName;
 if (bgmVolume) {
@@ -4355,7 +4231,7 @@ syncInitPromise = initPromise;
 initPromise.then(result => {
   syncReady = true;
   currentUserId = result && result.userId ? result.userId : null;
-  void settlePreviousDayIfNeeded();
+  void syncNaturalDayState();
   if (pendingChangeSync) {
     void flushChangeSync();
   } else {
@@ -4366,7 +4242,7 @@ initPromise.then(result => {
   setInterval(() => {
     if (syncReady) {
       syncNow();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   }, 5 * 60 * 1000);
 });
@@ -4375,7 +4251,7 @@ if (syncBtn) {
   syncBtn.addEventListener('click', () => {
     if (syncReady) {
       syncNow();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -4384,7 +4260,7 @@ if (syncPullBtn) {
   syncPullBtn.addEventListener('click', () => {
     if (syncReady) {
       pullNow();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -4393,7 +4269,7 @@ if (syncFullBtn) {
   syncFullBtn.addEventListener('click', () => {
     if (syncReady) {
       syncAllLocalToCloud();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -4401,7 +4277,7 @@ if (syncFullBtn) {
 window.addEventListener('online', () => {
   if (syncReady) {
     syncNow();
-    void settlePreviousDayIfNeeded({ force: true });
+    void syncNaturalDayState({ force: true });
   }
 });
 
@@ -4524,16 +4400,6 @@ if (problemReviewInput) {
 if (problemReviewModal) {
   problemReviewModal.addEventListener('click', event => {
     if (event.target === problemReviewModal) closeProblemReviewModal(true);
-  });
-}
-
-if (dailySettlementCloseBtn) {
-  dailySettlementCloseBtn.addEventListener('click', closeDailySettlementModal);
-}
-
-if (dailySettlementModal) {
-  dailySettlementModal.addEventListener('click', event => {
-    if (event.target === dailySettlementModal) closeDailySettlementModal();
   });
 }
 
