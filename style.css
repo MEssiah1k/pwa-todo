@@ -1074,8 +1074,10 @@ section {
 
 .todo-text {
   flex: 1;
-  word-break: break-word;
   min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .todo-due {
@@ -1630,6 +1632,7 @@ section {
     flex-wrap: wrap;
   }
 
+  #todo-queue-list li,
   #todo-list li,
   #completed-list li,
   #recurrence-list li {
