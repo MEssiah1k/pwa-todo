@@ -882,8 +882,10 @@ section {
 
 .todo-filter-nav {
   display: flex;
-  gap: 8px;
-  margin: 12px 0 4px;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin: 12px 0 6px;
 }
 
 .todo-filter-nav-btn {

@@ -938,7 +938,6 @@ function renderTodos() {
   };
   const queuedTodos = pendingTodos
     .filter(todo => isTodoQueued(todo))
-    .filter(matchesSelectedCategory)
     .sort(compareQueuedTodos);
   const listTodos = pendingTodos
     .filter(todo => !isTodoQueued(todo))
