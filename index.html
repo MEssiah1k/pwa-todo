@@ -113,8 +113,8 @@
     <div class="todo-list-header">未完成事项</div>
     <div class="input-row todo-filter-row">
       <select id="todo-filter-category" aria-label="筛选任务种类">
-        <option value="All" selected>全部</option>
-        <option value="Work">Work</option>
+        <option value="All">全部</option>
+        <option value="Work" selected>Work</option>
         <option value="Life">Life</option>
         <option value="Health">Health</option>
         <option value="Social">Social</option>
@@ -129,6 +129,10 @@
     </div>
     <p id="status" aria-live="polite"></p>
     <ul id="todo-list"></ul>
+    <div class="todo-filter-nav" aria-label="任务类型翻页">
+      <button id="todo-filter-prev" type="button" class="todo-filter-nav-btn">上一页</button>
+      <button id="todo-filter-next" type="button" class="todo-filter-nav-btn">下一页</button>
+    </div>
   </section>
 
   <div id="recurrence-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">

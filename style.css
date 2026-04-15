@@ -859,6 +859,7 @@ section {
   justify-content: flex-start;
   align-items: center;
   margin: 2px 0 0;
+  flex-wrap: wrap;
 }
 
 .todo-side-btn {
@@ -877,6 +878,27 @@ section {
   font-size: 20px;
   font-weight: 700;
   color: var(--text);
+}
+
+.todo-filter-nav {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.todo-filter-nav-btn {
+  min-width: 88px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.todo-filter-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .input-row {

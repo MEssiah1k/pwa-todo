@@ -39,6 +39,8 @@ const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
 const dueInput = document.getElementById('todo-due');
 const todoFilterCategory = document.getElementById('todo-filter-category');
+const todoFilterPrevBtn = document.getElementById('todo-filter-prev');
+const todoFilterNextBtn = document.getElementById('todo-filter-next');
 const problemReviewOpenBtn = document.getElementById('problem-review-open');
 const todoQueuePanel = document.getElementById('todo-queue-panel');
 const todoQueueList = document.getElementById('todo-queue-list');
@@ -218,6 +220,7 @@ const PROBLEM_REVIEW_QUESTIONS = [
   '2. 在这个方向里，最卡我的点是什么？',
   '3. 我现在能做的最小一步是什么？'
 ];
+const TODO_FILTER_SEQUENCE = ['All', 'Work', 'Life', 'Health', 'Social', 'Growth', 'Leisure', 'Plan'];
 
 migrateLegacyLocalStorageKeys([
   'pwaTodo.timerState',
@@ -929,15 +932,17 @@ function renderTodos() {
   const pendingTodos = activeTodos
     .filter(todo => !todo.completed)
     .sort(comparePendingTodos);
+  const matchesSelectedCategory = todo => {
+    if (selectedCategoryFilter === 'All') return true;
+    return parseCategorizedText(todo.text).category === selectedCategoryFilter;
+  };
   const queuedTodos = pendingTodos
     .filter(todo => isTodoQueued(todo))
+    .filter(matchesSelectedCategory)
     .sort(compareQueuedTodos);
   const listTodos = pendingTodos
     .filter(todo => !isTodoQueued(todo))
-    .filter(todo => {
-      if (selectedCategoryFilter === 'All') return true;
-      return parseCategorizedText(todo.text).category === selectedCategoryFilter;
-    })
+    .filter(matchesSelectedCategory)
     .sort(comparePendingTodos);
   const doneTodos = activeTodos
     .filter(todo => todo.completed)
@@ -950,6 +955,8 @@ function renderTodos() {
   if (todoQueuePanel) {
     todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
   }
+
+  updateTodoFilterNavButtons(pendingTodos);
 
   const renderTodoItem = (todo, targetList, group = 'list') => {
     const li = document.createElement('li');
@@ -1140,6 +1147,50 @@ function renderTodos() {
   if (completedModule) {
     completedModule.classList.toggle('hidden', doneTodos.length === 0);
   }
+}
+
+function getPendingTodoCountsByCategory(todoList = todos) {
+  const counts = new Map(TODO_FILTER_SEQUENCE.map(category => [category, 0]));
+  const pendingTodos = todoList.filter(todo => todo && !todo.deletedAt && !todo.completed);
+
+  counts.set('All', pendingTodos.length);
+  pendingTodos.forEach(todo => {
+    const category = parseCategorizedText(todo.text).category;
+    counts.set(category, (counts.get(category) || 0) + 1);
+  });
+
+  return counts;
+}
+
+function getNextTodoFilterCategory(direction, todoList = todos) {
+  if (!todoFilterCategory) return null;
+  const counts = getPendingTodoCountsByCategory(todoList);
+  const currentIndex = TODO_FILTER_SEQUENCE.indexOf(todoFilterCategory.value);
+  if (currentIndex < 0) return null;
+
+  for (let index = currentIndex + direction; index >= 0 && index < TODO_FILTER_SEQUENCE.length; index += direction) {
+    const category = TODO_FILTER_SEQUENCE[index];
+    if ((counts.get(category) || 0) > 0) return category;
+  }
+
+  return null;
+}
+
+function updateTodoFilterNavButtons(pendingTodos = null) {
+  const sourceTodos = Array.isArray(pendingTodos) ? pendingTodos : todos.filter(todo => todo && !todo.deletedAt && !todo.completed);
+  const previousCategory = getNextTodoFilterCategory(-1, sourceTodos);
+  const nextCategory = getNextTodoFilterCategory(1, sourceTodos);
+
+  if (todoFilterPrevBtn) todoFilterPrevBtn.disabled = !previousCategory;
+  if (todoFilterNextBtn) todoFilterNextBtn.disabled = !nextCategory;
+}
+
+function switchTodoFilter(direction) {
+  if (!todoFilterCategory) return;
+  const nextCategory = getNextTodoFilterCategory(direction);
+  if (!nextCategory) return;
+  todoFilterCategory.value = nextCategory;
+  renderTodos();
 }
 
 function isTodoInProgress(todo) {
@@ -1579,6 +1630,18 @@ if (dueInput) {
 if (todoFilterCategory) {
   todoFilterCategory.addEventListener('change', () => {
     renderTodos();
+  });
+}
+
+if (todoFilterPrevBtn) {
+  todoFilterPrevBtn.addEventListener('click', () => {
+    switchTodoFilter(-1);
+  });
+}
+
+if (todoFilterNextBtn) {
+  todoFilterNextBtn.addEventListener('click', () => {
+    switchTodoFilter(1);
   });
 }
 
