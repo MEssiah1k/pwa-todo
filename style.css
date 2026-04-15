@@ -1215,6 +1215,12 @@ section {
   z-index: 1000;
 }
 
+.modal-overlay.is-top-aligned {
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: max(20px, env(safe-area-inset-top, 0px) + 20px);
+}
+
 .modal-overlay.hidden {
   display: none;
 }

@@ -200,6 +200,7 @@ let timelineEditingDate = '';
 let timelineEditingDraft = [];
 let timelineEditingInitialSnapshot = '';
 let promptResolver = null;
+let promptDismissOnBackdrop = true;
 let assistCustomResolver = null;
 let problemReviewStepIndex = 0;
 let problemReviewAnswers = [];
@@ -328,7 +329,11 @@ function resolvePrompt(result) {
   if (!promptResolver) return;
   const resolver = promptResolver;
   promptResolver = null;
-  if (promptModal) promptModal.classList.add('hidden');
+  promptDismissOnBackdrop = true;
+  if (promptModal) {
+    promptModal.classList.add('hidden');
+    promptModal.classList.remove('is-top-aligned');
+  }
   resolver(result);
 }
 
@@ -341,9 +346,14 @@ function openPromptModal(message, options = {}) {
   promptConfirmBtn.textContent = options.confirmText || '确定';
   promptCancelBtn.textContent = options.cancelText || '取消';
   promptCancelBtn.classList.toggle('hidden', options.showCancel === false);
+  promptDismissOnBackdrop = options.dismissOnBackdrop !== false;
+  promptModal.classList.toggle('is-top-aligned', options.position === 'top');
   promptModal.classList.remove('hidden');
   return new Promise(resolve => {
     promptResolver = resolve;
+    requestAnimationFrame(() => {
+      promptConfirmBtn.focus();
+    });
   });
 }
 
@@ -2861,6 +2871,60 @@ function getLatestSummaryRecord(summaryList = summaries) {
     })[0];
 }
 
+async function addAutoSummaryRatingForTimer(dateStr, durationMs) {
+  if (!dateStr || durationMs <= 60 * 60 * 1000) return;
+  const summaryList = dateStr === selectedDate ? summaries : await getSummariesByDate(dateStr);
+  const existing = getLatestSummaryRecord(summaryList);
+  const now = new Date().toISOString();
+
+  if (existing) {
+    const currentRating = typeof existing.rating === 'number' ? existing.rating : 0;
+    const nextRating = Math.min(5, currentRating + 0.5);
+    if (nextRating === currentRating) return;
+    const nextSummary = {
+      ...existing,
+      rating: nextRating,
+      updatedAt: now,
+      deletedAt: null
+    };
+    await updateSummary(nextSummary);
+    if (dateStr === selectedDate) {
+      summaries = summaries.map(summary =>
+        summary.id === nextSummary.id ? nextSummary : summary
+      );
+      summaryRatingValue = nextRating;
+      renderSummaryRating();
+      setSummaryStatus('已自动加 0.5 星');
+    }
+    triggerChangeSync();
+    await renderContributionChart();
+    return;
+  }
+
+  const initResult = syncInitPromise ? await syncInitPromise : null;
+  const userId = currentUserId ||
+    (initResult && initResult.userId ? initResult.userId : ensureUserId());
+  const nextSummary = {
+    date: dateStr,
+    text: '',
+    rating: 0.5,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    uuid: generateUUID(),
+    userId
+  };
+  const id = await addSummary(nextSummary);
+  if (dateStr === selectedDate) {
+    summaries = [...summaries, { ...nextSummary, id }];
+    summaryRatingValue = nextSummary.rating;
+    renderSummaryRating();
+    setSummaryStatus('已自动加 0.5 星');
+  }
+  triggerChangeSync();
+  await renderContributionChart();
+}
+
 function scheduleSummarySave() {
   if (summarySaveTimer) clearTimeout(summarySaveTimer);
   summarySaveTimer = setTimeout(saveSummaryNow, 2000);
@@ -3180,6 +3244,10 @@ function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
     slices,
     state
   };
+  const durationMs = slices.reduce(
+    (sum, slice) => sum + Math.max(0, slice.endAt - slice.startAt),
+    0
+  );
   const history = Array.isArray(timerTimelineByDate[segment.date]) ? timerTimelineByDate[segment.date] : [];
   timerTimelineByDate = {
     ...timerTimelineByDate,
@@ -3187,6 +3255,9 @@ function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
   };
   activeTimerSegment = null;
   void Promise.all([persistTimerTimelineHistory(), persistActiveTimerSegment()]);
+  if (state === 'completed' || state === 'stopped') {
+    void addAutoSummaryRatingForTimer(segment.date, durationMs);
+  }
   triggerChangeSync();
   renderTimerTimeline();
 }
@@ -3823,19 +3894,21 @@ function setTimerStatus(text) {
 
 function hideTimerInlinePrompt() {
   timerInlinePromptAction = null;
-  if (timerInlinePromptEl) timerInlinePromptEl.classList.add('hidden');
 }
 
 function showTimerInlinePrompt(message, options = {}) {
-  if (!timerInlinePromptEl || !timerInlinePromptTextEl || !timerInlinePromptConfirmBtn || !timerInlinePromptCancelBtn) {
-    return;
-  }
-  timerInlinePromptTextEl.textContent = message;
-  timerInlinePromptConfirmBtn.textContent = options.confirmText || '确定';
-  timerInlinePromptCancelBtn.textContent = options.cancelText || '取消';
-  timerInlinePromptCancelBtn.classList.toggle('hidden', options.showCancel === false);
   timerInlinePromptAction = typeof options.onConfirm === 'function' ? options.onConfirm : null;
-  timerInlinePromptEl.classList.remove('hidden');
+  void openPromptModal(message, {
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    showCancel: options.showCancel !== false,
+    dismissOnBackdrop: false,
+    position: 'top'
+  }).then(confirmed => {
+    const action = timerInlinePromptAction;
+    hideTimerInlinePrompt();
+    if (confirmed && action) action();
+  });
 }
 
 function resetBellSchedule(now) {
@@ -4329,7 +4402,7 @@ if (promptConfirmBtn) {
 
 if (promptModal) {
   promptModal.addEventListener('click', event => {
-    if (event.target === promptModal) resolvePrompt(false);
+    if (event.target === promptModal && promptDismissOnBackdrop) resolvePrompt(false);
   });
 }
 
