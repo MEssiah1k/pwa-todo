@@ -19,7 +19,11 @@ import {
   updateSummary,
   addRecurrenceRule,
   updateRecurrenceRule
-} from './db.js';
+} from './db.js?v=20260325-module-fix-1';
+import {
+  createScopedStorageKey,
+  migrateLegacyLocalStorageKeys
+} from './storage-scope.js?v=20260325-module-fix-1';
 
 const SUPABASE_URL = 'https://wjyqimuecbairlbdfetr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqeXFpbXVlY2JhaXJsYmRmZXRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2NDU4MDcsImV4cCI6MjA4NjIyMTgwN30.il1pkrnEjHUnnvWR7PCh10VeSWrC18fv596vSCLQOpE';
@@ -36,10 +40,18 @@ const TIMER_TIMELINE_ACTIVE_META_KEY = 'timerTimelineActive';
 const TIMER_TIMELINE_UPDATED_AT_META_KEY = 'timerTimelineUpdatedAt';
 const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt';
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
-const TIMER_TIMELINE_LOCAL_KEY = 'pwaTodo.timerTimelineByDate';
-const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = 'pwaTodo.timerTimelineActive';
+const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
+const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
+const WORK_PUNCH_LOCAL_KEY = createScopedStorageKey('pwaTodo.workPunchRecords');
+const WORK_PUNCH_REMOTE_KEY = 'work_punch_records';
+const TODO_QUEUE_STATE_REMOTE_KEY = 'todo_queue_state';
 const MAX_AUTO_DEDUPE_DELETE_COUNT = 50;
 const MAX_AUTO_DEDUPE_DELETE_RATIO = 0.3;
+
+migrateLegacyLocalStorageKeys([
+  'pwaTodo.timerTimelineByDate',
+  'pwaTodo.timerTimelineActive'
+]);
 
 function getTodayDateStr() {
   const now = new Date();
@@ -49,6 +61,27 @@ function getTodayDateStr() {
   return `${y}-${m}-${d}`;
 }
 const DEBUG = true;
+
+function readSyncLocalJson(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeSyncLocalJson(key, value) {
+  try {
+    if (value == null) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    }
+  } catch (err) {
+    // ignore
+  }
+}
 
 function generateUUID() {
   if (crypto && typeof crypto.randomUUID === 'function') {
@@ -136,6 +169,82 @@ function mapRecurrenceRuleFromRemote(row) {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at || null
   };
+}
+
+function normalizeRecurrenceWeekdays(weekdays) {
+  if (!Array.isArray(weekdays)) return '';
+  return [...weekdays]
+    .map(day => Number(day))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .join(',');
+}
+
+function getRecurrenceRuleFingerprint(rule) {
+  if (!rule) return '';
+  const text = typeof rule.text === 'string' ? rule.text.trim() : '';
+  return [
+    text,
+    rule.type || '',
+    normalizeRecurrenceWeekdays(rule.weekdays),
+    rule.day ?? '',
+    rule.month ?? '',
+    rule.interval ?? '',
+    rule.unit ?? ''
+  ].join('__');
+}
+
+function compareRecurrenceRuleForDedupe(a, b) {
+  const aUpdated = a.updatedAt || a.createdAt || '';
+  const bUpdated = b.updatedAt || b.createdAt || '';
+  if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+  const aDeleted = Boolean(a && a.deletedAt);
+  const bDeleted = Boolean(b && b.deletedAt);
+  if (aDeleted !== bDeleted) return aDeleted ? -1 : 1;
+  const aCreated = a.createdAt || '';
+  const bCreated = b.createdAt || '';
+  if (aCreated !== bCreated) return bCreated.localeCompare(aCreated);
+  return (b.id || 0) - (a.id || 0);
+}
+
+function pickPreferredRecurrenceRules(rules) {
+  const groups = new Map();
+  for (const rule of rules) {
+    const fingerprint = getRecurrenceRuleFingerprint(rule);
+    if (!fingerprint) continue;
+    if (!groups.has(fingerprint)) groups.set(fingerprint, []);
+    groups.get(fingerprint).push(rule);
+  }
+
+  const preferredByFingerprint = new Map();
+  for (const [fingerprint, group] of groups.entries()) {
+    group.sort(compareRecurrenceRuleForDedupe);
+    preferredByFingerprint.set(fingerprint, group[0]);
+  }
+  return preferredByFingerprint;
+}
+
+export async function dedupeLocalRecurrenceRules() {
+  const rules = await getAllRecurrenceRules();
+  const preferredByFingerprint = pickPreferredRecurrenceRules(rules);
+  const now = new Date().toISOString();
+  let changed = false;
+
+  for (const rule of rules) {
+    const fingerprint = getRecurrenceRuleFingerprint(rule);
+    if (!fingerprint) continue;
+    const preferred = preferredByFingerprint.get(fingerprint);
+    if (!preferred || preferred.id === rule.id) continue;
+    if (rule.deletedAt) continue;
+    await updateRecurrenceRule({
+      ...rule,
+      deletedAt: now,
+      updatedAt: now
+    });
+    changed = true;
+  }
+
+  return changed;
 }
 
 function mapSummaryFromRemote(row) {
@@ -265,8 +374,14 @@ export async function syncNow() {
     await overwriteRemoteRecurrenceRulesFromLocal();
     if (DEBUG) console.log('[sync] push timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
+    if (DEBUG) console.log('[sync] sync work punch');
+    const workPunchUpdatedDates = await syncWorkPunchRecords();
+    if (DEBUG) console.log('[sync] sync todo queue state');
+    const queueUpdatedDates = await syncTodoQueueState();
 
     dedupedAfterPull.forEach(date => updatedDates.add(date));
+    workPunchUpdatedDates.forEach(date => updatedDates.add(date));
+    queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
     setStatus('Idle', `last ${lastSyncAt}`);
@@ -292,6 +407,10 @@ export async function pushNow() {
     await overwriteRemoteRecurrenceRulesFromLocal();
     if (DEBUG) console.log('[sync] push-only timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
+    if (DEBUG) console.log('[sync] push-only work punch');
+    await syncWorkPunchRecords();
+    if (DEBUG) console.log('[sync] push-only todo queue state');
+    await syncTodoQueueState();
 
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
@@ -307,6 +426,12 @@ export async function pullNow() {
   try {
     setStatus('Syncing', 'pull only');
     const updatedDates = await pullRemoteChanges();
+    const dedupedAfterPull = await dedupeLocalTodosByNameAndStatus();
+    const workPunchUpdatedDates = await syncWorkPunchRecords();
+    const queueUpdatedDates = await syncTodoQueueState();
+    dedupedAfterPull.forEach(date => updatedDates.add(date));
+    workPunchUpdatedDates.forEach(date => updatedDates.add(date));
+    queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
     setStatus('Idle', `last ${lastSyncAt}`);
@@ -354,6 +479,10 @@ export async function syncAllLocalToCloud() {
     await overwriteRemoteRecurrenceRulesFromLocal(fullSyncUpdatedAt);
     if (DEBUG) console.log('[sync] full push timer timeline');
     await pushLocalTimerTimeline('1970-01-01T00:00:00.000Z', fullSyncUpdatedAt, true);
+    if (DEBUG) console.log('[sync] full push work punch');
+    await syncWorkPunchRecords(true);
+    if (DEBUG) console.log('[sync] full push todo queue state');
+    await syncTodoQueueState(true);
 
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
@@ -537,6 +666,178 @@ export async function insertRemoteKvIfAbsent(key, value, updatedAt = new Date().
   throw error;
 }
 
+function normalizeWorkPunchRecords(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  Object.entries(source).forEach(([dateStr, record]) => {
+    if (!dateStr || !record || typeof record !== 'object') return;
+    const nextRecord = {};
+    Object.entries(record).forEach(([slot, slotValue]) => {
+      if (!slot) return;
+      if (typeof slotValue === 'string' && slotValue) {
+        nextRecord[slot] = { time: slotValue, updatedAt: '' };
+        return;
+      }
+      if (!slotValue || typeof slotValue !== 'object') return;
+      const time = typeof slotValue.time === 'string' ? slotValue.time : '';
+      if (!time) return;
+      nextRecord[slot] = {
+        time,
+        updatedAt: typeof slotValue.updatedAt === 'string' ? slotValue.updatedAt : ''
+      };
+    });
+    if (Object.keys(nextRecord).length) result[dateStr] = nextRecord;
+  });
+  return result;
+}
+
+function mergeWorkPunchRecords(localRecords, remoteRecords) {
+  const merged = {};
+  const allDates = new Set([
+    ...Object.keys(localRecords || {}),
+    ...Object.keys(remoteRecords || {})
+  ]);
+  allDates.forEach(dateStr => {
+    const localRecord = localRecords && localRecords[dateStr] ? localRecords[dateStr] : {};
+    const remoteRecord = remoteRecords && remoteRecords[dateStr] ? remoteRecords[dateStr] : {};
+    const slotResult = {};
+    const allSlots = new Set([...Object.keys(localRecord), ...Object.keys(remoteRecord)]);
+    allSlots.forEach(slot => {
+      const localValue = localRecord[slot];
+      const remoteValue = remoteRecord[slot];
+      if (!localValue && remoteValue) {
+        slotResult[slot] = remoteValue;
+        return;
+      }
+      if (localValue && !remoteValue) {
+        slotResult[slot] = localValue;
+        return;
+      }
+      if (!localValue && !remoteValue) return;
+      slotResult[slot] = (remoteValue.updatedAt || '') > (localValue.updatedAt || '')
+        ? remoteValue
+        : localValue;
+    });
+    if (Object.keys(slotResult).length) merged[dateStr] = slotResult;
+  });
+  return merged;
+}
+
+async function syncWorkPunchRecords(force = false) {
+  const updatedDates = new Set();
+  const localRecords = normalizeWorkPunchRecords(readSyncLocalJson(WORK_PUNCH_LOCAL_KEY));
+  const remoteRow = await fetchRemoteKv(WORK_PUNCH_REMOTE_KEY);
+  const remoteRecords = normalizeWorkPunchRecords(remoteRow && remoteRow.value ? remoteRow.value.records : {});
+  const mergedRecords = mergeWorkPunchRecords(localRecords, remoteRecords);
+  const localSnapshot = JSON.stringify(localRecords);
+  const remoteSnapshot = JSON.stringify(remoteRecords);
+  const mergedSnapshot = JSON.stringify(mergedRecords);
+  if (localSnapshot !== mergedSnapshot) {
+    writeSyncLocalJson(WORK_PUNCH_LOCAL_KEY, mergedRecords);
+    Object.keys(mergedRecords).forEach(dateStr => updatedDates.add(dateStr));
+  }
+  const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
+  const newestLocalUpdatedAt = Object.values(mergedRecords)
+    .flatMap(record => Object.values(record))
+    .map(item => item.updatedAt || '')
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || new Date().toISOString();
+  if (force || remoteSnapshot !== mergedSnapshot || remoteUpdatedAt < newestLocalUpdatedAt) {
+    await upsertRemoteKv(WORK_PUNCH_REMOTE_KEY, { records: mergedRecords }, newestLocalUpdatedAt);
+  }
+  return updatedDates;
+}
+
+function buildTodoQueueStateMap(todos) {
+  const result = {};
+  todos.forEach(todo => {
+    if (!todo || !todo.uuid) return;
+    result[todo.uuid] = {
+      queued: Boolean(todo.queued),
+      queueOrder: Number.isFinite(todo.queueOrder) ? todo.queueOrder : null,
+      sortOrder: Number.isFinite(todo.sortOrder) ? todo.sortOrder : null,
+      updatedAt: todo.updatedAt || todo.createdAt || '',
+      deletedAt: todo.deletedAt || null,
+      completed: Boolean(todo.completed)
+    };
+  });
+  return result;
+}
+
+function mergeTodoQueueState(localState, remoteState) {
+  const merged = {};
+  const allIds = new Set([
+    ...Object.keys(localState || {}),
+    ...Object.keys(remoteState || {})
+  ]);
+  allIds.forEach(uuid => {
+    const localValue = localState && localState[uuid] ? localState[uuid] : null;
+    const remoteValue = remoteState && remoteState[uuid] ? remoteState[uuid] : null;
+    if (!localValue && remoteValue) {
+      merged[uuid] = remoteValue;
+      return;
+    }
+    if (localValue && !remoteValue) {
+      merged[uuid] = localValue;
+      return;
+    }
+    if (!localValue && !remoteValue) return;
+    merged[uuid] = (remoteValue.updatedAt || '') > (localValue.updatedAt || '')
+      ? remoteValue
+      : localValue;
+  });
+  return merged;
+}
+
+async function syncTodoQueueState(force = false) {
+  const updatedDates = new Set();
+  const todos = await getAllTodos();
+  const localState = buildTodoQueueStateMap(todos);
+  const remoteRow = await fetchRemoteKv(TODO_QUEUE_STATE_REMOTE_KEY);
+  const remoteState = remoteRow && remoteRow.value && typeof remoteRow.value.state === 'object'
+    ? remoteRow.value.state
+    : {};
+  const mergedState = mergeTodoQueueState(localState, remoteState);
+
+  const localByUuid = new Map(todos.filter(todo => todo && todo.uuid).map(todo => [todo.uuid, todo]));
+  await Promise.all(
+    Object.entries(mergedState).map(async ([uuid, state]) => {
+      const localTodo = localByUuid.get(uuid);
+      if (!localTodo) return;
+      if ((state.updatedAt || '') <= (localTodo.updatedAt || '')) return;
+      const nextTodo = {
+        ...localTodo,
+        queued: Boolean(state.queued),
+        queueOrder: state.queueOrder ?? null,
+        sortOrder: state.sortOrder ?? null,
+        updatedAt: state.updatedAt || localTodo.updatedAt
+      };
+      if (
+        Boolean(localTodo.queued) === Boolean(nextTodo.queued) &&
+        (localTodo.queueOrder ?? null) === (nextTodo.queueOrder ?? null) &&
+        (localTodo.sortOrder ?? null) === (nextTodo.sortOrder ?? null)
+      ) {
+        return;
+      }
+      await updateTodo(nextTodo);
+      if (nextTodo.date) updatedDates.add(nextTodo.date);
+    })
+  );
+
+  const mergedSnapshot = JSON.stringify(mergedState);
+  const remoteSnapshot = JSON.stringify(remoteState || {});
+  const newestUpdatedAt = Object.values(mergedState)
+    .map(item => item && item.updatedAt ? item.updatedAt : '')
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || new Date().toISOString();
+  if (force || mergedSnapshot !== remoteSnapshot || (remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '') < newestUpdatedAt) {
+    await upsertRemoteKv(TODO_QUEUE_STATE_REMOTE_KEY, { state: mergedState }, newestUpdatedAt);
+  }
+  return updatedDates;
+}
+
 function normalizeTimerTimelineManualOps(value) {
   const next = value && typeof value === 'object' ? value : {};
   return {
@@ -634,14 +935,17 @@ function compareTimerTimelineSegment(a, b) {
 
 async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
   await normalizeLocalData();
+  await dedupeLocalRecurrenceRules();
   const localRules = await getAllRecurrenceRules();
-  const localUuids = localRules
+  const preferredByFingerprint = pickPreferredRecurrenceRules(localRules);
+  const effectiveLocalRules = Array.from(preferredByFingerprint.values());
+  const localUuids = effectiveLocalRules
     .map(rule => rule && rule.uuid)
     .filter(Boolean);
 
-  if (DEBUG) console.log('[sync] local recurrence rules', localRules.length);
-  if (localRules.length) {
-    const payload = localRules.map(rule =>
+  if (DEBUG) console.log('[sync] local recurrence rules', effectiveLocalRules.length);
+  if (effectiveLocalRules.length) {
+    const payload = effectiveLocalRules.map(rule =>
       mapRecurrenceRuleToRemote(
         forcedUpdatedAt ? { ...rule, updatedAt: forcedUpdatedAt } : rule
       )
@@ -657,7 +961,7 @@ async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
 
   const { data: remoteRows, error: remoteListError } = await supabase
     .from('recurrence_rules')
-    .select('uuid');
+    .select('uuid, text, type, weekdays, day, month, interval, unit, created_at, updated_at, deleted_at');
   if (remoteListError) {
     if (isMissingRecurrenceTable(remoteListError)) return;
     throw remoteListError;
@@ -665,8 +969,15 @@ async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
 
   const localUuidSet = new Set(localUuids);
   const remoteOnlyUuids = (remoteRows || [])
-    .map(row => row && row.uuid)
-    .filter(uuid => uuid && !localUuidSet.has(uuid));
+    .map(row => mapRecurrenceRuleFromRemote(row))
+    .filter(rule => {
+      if (!rule || !rule.uuid) return false;
+      const fingerprint = getRecurrenceRuleFingerprint(rule);
+      const preferred = fingerprint ? preferredByFingerprint.get(fingerprint) : null;
+      if (preferred && preferred.uuid !== rule.uuid) return true;
+      return !localUuidSet.has(rule.uuid);
+    })
+    .map(rule => rule.uuid);
 
   if (!remoteOnlyUuids.length) return;
   if (DEBUG) console.log('[sync] delete remote-only recurrence rules', remoteOnlyUuids.length);
@@ -794,6 +1105,7 @@ export async function pullRemoteChanges() {
         }
       }
     }
+    await dedupeLocalRecurrenceRules();
   }
 
   const { data: timerRows, error: timerPullError } = await fetchAllRowsWithError('timer_timeline');
@@ -828,7 +1140,7 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
         : {};
       await setMeta(TIMER_TIMELINE_META_KEY, historyValue);
       await setMeta(TIMER_TIMELINE_UPDATED_AT_META_KEY, remoteUpdatedAt || new Date().toISOString());
-      writeLocalJson(TIMER_TIMELINE_LOCAL_KEY, historyValue);
+      writeSyncLocalJson(TIMER_TIMELINE_LOCAL_KEY, historyValue);
       Object.keys(historyValue).forEach(date => {
         if (date) updatedDates.add(date);
       });
@@ -845,23 +1157,11 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
       const activeValue = activeRow.value ?? null;
       await setMeta(TIMER_TIMELINE_ACTIVE_META_KEY, activeValue);
       await setMeta(TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY, remoteUpdatedAt || new Date().toISOString());
-      writeLocalJson(TIMER_TIMELINE_ACTIVE_LOCAL_KEY, activeValue);
+      writeSyncLocalJson(TIMER_TIMELINE_ACTIVE_LOCAL_KEY, activeValue);
       if (activeValue && activeValue.date) {
         updatedDates.add(activeValue.date);
       }
     }
-  }
-}
-
-function writeLocalJson(key, value) {
-  try {
-    if (value == null) {
-      window.localStorage.removeItem(key);
-      return;
-    }
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    // ignore local persistence failures
   }
 }
 
@@ -920,6 +1220,15 @@ function mergeTodoForPull(local, remote) {
   if (merged.carriedFrom == null && local.carriedFrom != null) {
     merged.carriedFrom = local.carriedFrom;
   }
+  if (merged.sortOrder == null && local.sortOrder != null) {
+    merged.sortOrder = local.sortOrder;
+  }
+  if (merged.queued == null && local.queued != null) {
+    merged.queued = local.queued;
+  }
+  if (merged.queueOrder == null && local.queueOrder != null) {
+    merged.queueOrder = local.queueOrder;
+  }
   if (!merged.userId && local.userId) {
     merged.userId = local.userId;
   }
@@ -943,6 +1252,9 @@ function shouldUpdateTodo(local, next) {
     (local.recurrenceRuleId ?? null) !== (next.recurrenceRuleId ?? null) ||
     (local.dueMinutes ?? null) !== (next.dueMinutes ?? null) ||
     (local.carriedFrom ?? null) !== (next.carriedFrom ?? null) ||
+    Boolean(local.queued) !== Boolean(next.queued) ||
+    (local.queueOrder ?? null) !== (next.queueOrder ?? null) ||
+    (local.sortOrder ?? null) !== (next.sortOrder ?? null) ||
     (local.userId ?? null) !== (next.userId ?? null) ||
     (local.createdAt || '') !== (next.createdAt || '') ||
     (local.updatedAt || '') !== (next.updatedAt || '') ||

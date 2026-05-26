@@ -1,153 +1,337 @@
 const DEFAULT_BGM_SRC = new URL('../assets/bgm/pinknoise.m4a', import.meta.url).href;
+const DEBUG_LOG_LIMIT = 50;
+const DECODE_TIMEOUT_MS = 8000;
 
-let audio = null;
-let objectUrl = null;
+let audioContext = null;
+let currentSourceNode = null;
+let currentGainNode = null;
+let htmlAudio = null;
 let userInteracted = false;
-let retryOnNextInteraction = false;
-let volume = 0.6;
-let reloadBeforeNextPlay = false;
 let shouldBePlaying = false;
-let recoveryTimer = null;
-let unlockBound = false;
-let waitingForCanPlay = false;
+let volume = 0.6;
 let playbackState = 'stopped';
+let sourceConfig = { type: 'url', value: DEFAULT_BGM_SRC, label: 'default' };
+let activePlaybackToken = 0;
+let inflightPlayPromise = null;
+let forceHtmlAudioFallback = false;
+
 const stateListeners = new Set();
+const debugListeners = new Set();
+const debugLogs = [];
+const decodedBufferCache = new Map();
+const pendingDecodeCache = new Map();
+
+function summarizeError(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (typeof error.message === 'string' && error.message) return error.message;
+  return String(error);
+}
+
+function shouldFallbackToHtmlAudio(error) {
+  const message = summarizeError(error).toLowerCase();
+  return (
+    message.includes('unable to decode audio data') ||
+    message.includes('decode') ||
+    message.includes('解码') ||
+    message.includes('encoding') ||
+    message.includes('media')
+  );
+}
 
 function emitState() {
   stateListeners.forEach(listener => {
     try {
       listener(playbackState);
     } catch (err) {
-      // Ignore listener errors so audio state updates stay resilient.
+      // ignore
     }
   });
+}
+
+function pushDebugLog(event, detail = '') {
+  const time = new Date();
+  const line = `[${time.toLocaleTimeString('zh-CN', { hour12: false })}] ${event}${detail ? ` | ${detail}` : ''}`;
+  debugLogs.push(line);
+  if (debugLogs.length > DEBUG_LOG_LIMIT) {
+    debugLogs.splice(0, debugLogs.length - DEBUG_LOG_LIMIT);
+  }
+  emitDebug();
 }
 
 function setPlaybackState(nextState) {
   if (playbackState === nextState) return;
   playbackState = nextState;
+  pushDebugLog('state', nextState);
   emitState();
 }
 
-function clearRecoveryTimer() {
-  if (!recoveryTimer) return;
-  clearTimeout(recoveryTimer);
-  recoveryTimer = null;
-}
-
-function clearWaitingForCanPlay() {
-  waitingForCanPlay = false;
-}
-
-function scheduleRecovery() {
-  if (!audio || !shouldBePlaying || recoveryTimer) return;
-  recoveryTimer = setTimeout(() => {
-    recoveryTimer = null;
-    if (!audio || !shouldBePlaying) return;
-    reloadBeforeNextPlay = true;
-    play();
-  }, 200);
-}
-
-function ensureAudio() {
-  if (!audio) {
-    audio = new Audio();
-    audio.loop = true;
-    audio.preload = 'auto';
-    audio.volume = volume;
-    audio.addEventListener('play', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('playing');
-    });
-    audio.addEventListener('playing', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('playing');
-    });
-    audio.addEventListener('canplay', clearWaitingForCanPlay);
-    audio.addEventListener('loadeddata', clearWaitingForCanPlay);
-    audio.addEventListener('ended', () => {
-      if (!shouldBePlaying) return;
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('pause', () => {
-      if (!shouldBePlaying) {
-        setPlaybackState('paused');
-        return;
-      }
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('stalled', () => {
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('waiting', () => {
-      if (!shouldBePlaying) return;
-      setPlaybackState('loading');
-    });
-    audio.addEventListener('error', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('emptied', () => {
-      clearWaitingForCanPlay();
-      setPlaybackState('loading');
-      scheduleRecovery();
-    });
-    audio.addEventListener('abort', clearWaitingForCanPlay);
-  }
-}
-
-function safePlay() {
-  if (!audio) return;
-  const playPromise = audio.play();
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(() => {
-      retryOnNextInteraction = true;
-      if (!userInteracted) {
-        // 刷新恢复后的自动播放常被浏览器拦截，此时不要长期停留在“准备中”。
-        setPlaybackState('paused');
-        return;
-      }
-      if (shouldBePlaying && userInteracted) {
-        reloadBeforeNextPlay = true;
-        scheduleRecovery();
-      }
-    });
-  }
-}
-
-function schedulePlayWhenReady() {
-  if (!audio || waitingForCanPlay) return;
-  waitingForCanPlay = true;
-  const playWhenReady = () => {
-    waitingForCanPlay = false;
-    if (!audio || !shouldBePlaying) return;
-    safePlay();
+function getDebugSnapshot() {
+  return {
+    playbackState,
+    shouldBePlaying,
+    userInteracted,
+    volume,
+    source: {
+      type: sourceConfig.type,
+      label: sourceConfig.label,
+      value: sourceConfig.type === 'url' ? sourceConfig.value : sourceConfig.value?.name || ''
+    },
+    audio: audioContext
+      ? {
+          contextState: audioContext.state,
+          sampleRate: audioContext.sampleRate,
+          hasSourceNode: Boolean(currentSourceNode),
+          hasGainNode: Boolean(currentGainNode)
+        }
+      : null,
+    htmlAudio: htmlAudio
+      ? {
+          src: htmlAudio.currentSrc || htmlAudio.src || '',
+          paused: htmlAudio.paused,
+          ended: htmlAudio.ended,
+          readyState: htmlAudio.readyState,
+          networkState: htmlAudio.networkState
+        }
+      : null,
+    mode: forceHtmlAudioFallback ? 'html-audio' : 'web-audio',
+    logs: [...debugLogs]
   };
-  audio.addEventListener('canplay', playWhenReady, { once: true });
-  audio.addEventListener('loadeddata', playWhenReady, { once: true });
+}
+
+function emitDebug() {
+  const snapshot = getDebugSnapshot();
+  debugListeners.forEach(listener => {
+    try {
+      listener(snapshot);
+    } catch (err) {
+      // ignore
+    }
+  });
+}
+
+function ensureAudioContext() {
+  if (audioContext) return audioContext;
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context) {
+    throw new Error('当前浏览器不支持 AudioContext');
+  }
+  audioContext = new Context();
+  pushDebugLog('context.create', `state=${audioContext.state} sampleRate=${audioContext.sampleRate}`);
+  emitDebug();
+  return audioContext;
+}
+
+async function resumeAudioContext() {
+  const context = ensureAudioContext();
+  if (context.state === 'running') return context;
+  pushDebugLog('context.resume.start', context.state);
+  await context.resume();
+  pushDebugLog('context.resume.done', context.state);
+  emitDebug();
+  return context;
+}
+
+function getSourceCacheKey() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) return 'file:unknown';
+    return `file:${file.name}:${file.size}:${file.lastModified}`;
+  }
+  return `url:${sourceConfig.value}`;
+}
+
+async function readSourceArrayBuffer() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) throw new Error('未选择本地音频文件');
+    pushDebugLog('source.file.read', `${file.name} ${file.size} bytes`);
+    return file.arrayBuffer();
+  }
+  pushDebugLog('source.fetch.start', sourceConfig.value);
+  const response = await fetch(sourceConfig.value, { cache: 'no-store' });
+  pushDebugLog('source.fetch.done', `ok=${response.ok} status=${response.status}`);
+  if (!response.ok) {
+    throw new Error(`音频请求失败: ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+async function decodeCurrentSource(context) {
+  const cacheKey = getSourceCacheKey();
+  if (decodedBufferCache.has(cacheKey)) {
+    pushDebugLog('decode.cache.hit', cacheKey);
+    return decodedBufferCache.get(cacheKey);
+  }
+  if (pendingDecodeCache.has(cacheKey)) {
+    pushDebugLog('decode.pending.hit', cacheKey);
+    return pendingDecodeCache.get(cacheKey);
+  }
+
+  const pendingDecode = (async () => {
+    pushDebugLog('decode.start', cacheKey);
+    const arrayBuffer = await readSourceArrayBuffer();
+    const audioBuffer = await decodeArrayBuffer(context, arrayBuffer);
+    decodedBufferCache.set(cacheKey, audioBuffer);
+    pushDebugLog('decode.done', `duration=${audioBuffer.duration.toFixed(2)}s channels=${audioBuffer.numberOfChannels}`);
+    return audioBuffer;
+  })();
+
+  pendingDecodeCache.set(cacheKey, pendingDecode);
+  try {
+    return await pendingDecode;
+  } finally {
+    pendingDecodeCache.delete(cacheKey);
+  }
+}
+
+function decodeArrayBuffer(context, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      pushDebugLog('decode.timeout', `${DECODE_TIMEOUT_MS}ms`);
+      reject(new Error(`音频解码超时（${DECODE_TIMEOUT_MS}ms）`));
+    }, DECODE_TIMEOUT_MS);
+
+    const finishResolve = audioBuffer => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(audioBuffer);
+    };
+
+    const finishReject = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(error);
+    };
+
+    try {
+      // 回调式 decodeAudioData 在部分移动浏览器上比 Promise 版稳定。
+      const maybePromise = context.decodeAudioData(
+        arrayBuffer.slice(0),
+        audioBuffer => {
+          pushDebugLog('decode.callback.resolve');
+          finishResolve(audioBuffer);
+        },
+        error => {
+          pushDebugLog('decode.callback.reject', summarizeError(error));
+          finishReject(error || new Error('音频解码失败'));
+        }
+      );
+
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(audioBuffer => {
+          pushDebugLog('decode.promise.resolve');
+          finishResolve(audioBuffer);
+        }).catch(error => {
+          pushDebugLog('decode.promise.reject', summarizeError(error));
+          finishReject(error);
+        });
+      }
+    } catch (error) {
+      pushDebugLog('decode.throw', summarizeError(error));
+      finishReject(error);
+    }
+  });
+}
+
+function stopCurrentPlayback() {
+  if (currentSourceNode) {
+    try {
+      currentSourceNode.stop();
+    } catch (err) {
+      // ignore repeated stop
+    }
+    currentSourceNode.disconnect();
+    currentSourceNode = null;
+  }
+  if (currentGainNode) {
+    currentGainNode.disconnect();
+    currentGainNode = null;
+  }
+  if (htmlAudio) {
+    htmlAudio.pause();
+    try {
+      htmlAudio.currentTime = 0;
+    } catch (err) {
+      // ignore
+    }
+  }
+  emitDebug();
+}
+
+function ensureHtmlAudio() {
+  if (htmlAudio) return htmlAudio;
+  htmlAudio = new Audio();
+  htmlAudio.loop = true;
+  htmlAudio.preload = 'auto';
+  htmlAudio.volume = volume;
+  htmlAudio.addEventListener('playing', () => {
+    pushDebugLog('html.playing');
+    setPlaybackState('playing');
+    emitDebug();
+  });
+  htmlAudio.addEventListener('pause', () => {
+    pushDebugLog('html.pause');
+    if (!shouldBePlaying) {
+      setPlaybackState('paused');
+    }
+    emitDebug();
+  });
+  htmlAudio.addEventListener('waiting', () => {
+    pushDebugLog('html.waiting');
+    if (shouldBePlaying) setPlaybackState('loading');
+    emitDebug();
+  });
+  htmlAudio.addEventListener('error', () => {
+    pushDebugLog('html.error');
+    if (shouldBePlaying) setPlaybackState('paused');
+    emitDebug();
+  });
+  return htmlAudio;
+}
+
+function resolveSourceUrl() {
+  if (sourceConfig.type === 'file') {
+    const file = sourceConfig.value;
+    if (!file) throw new Error('未选择本地音频文件');
+    return URL.createObjectURL(file);
+  }
+  return sourceConfig.value;
+}
+
+async function playViaHtmlAudio() {
+  const audio = ensureHtmlAudio();
+  const nextSrc = resolveSourceUrl();
+  if (audio.src !== nextSrc) {
+    audio.src = nextSrc;
+    pushDebugLog('html.src.set', nextSrc);
+  }
+  audio.volume = volume;
+  pushDebugLog('html.play.call');
+  await audio.play();
+  pushDebugLog('html.play.started');
+  setPlaybackState('playing');
+  emitDebug();
 }
 
 function unlockPlayback() {
   userInteracted = true;
-  if (retryOnNextInteraction && shouldBePlaying) {
-    retryOnNextInteraction = false;
-    play();
+  pushDebugLog('user.interaction');
+  if (shouldBePlaying && playbackState === 'paused') {
+    void play();
   }
 }
 
 export function init() {
-  ensureAudio();
-  if (!audio.src) {
-    audio.src = DEFAULT_BGM_SRC;
-  }
+  pushDebugLog('init', DEFAULT_BGM_SRC);
   emitState();
-  audio.load();
-  if (unlockBound) return;
-  unlockBound = true;
+  if (window.__pwaTodoBgmInitBound) return;
+  window.__pwaTodoBgmInitBound = true;
   window.addEventListener('pointerdown', unlockPlayback, { passive: true });
   window.addEventListener('touchend', unlockPlayback, { passive: true });
   window.addEventListener('click', unlockPlayback, { passive: true });
@@ -155,101 +339,134 @@ export function init() {
 }
 
 export function setSource(source) {
-  ensureAudio();
-  if (objectUrl) {
-    URL.revokeObjectURL(objectUrl);
-    objectUrl = null;
-  }
   if (source instanceof File) {
-    objectUrl = URL.createObjectURL(source);
-    audio.src = objectUrl;
-  } else if (typeof source === 'string') {
-    audio.src = source;
+    sourceConfig = {
+      type: 'file',
+      value: source,
+      label: source.name || 'local-file'
+    };
+    pushDebugLog('source.set.file', sourceConfig.label);
+  } else if (typeof source === 'string' && source) {
+    sourceConfig = {
+      type: 'url',
+      value: source,
+      label: source
+    };
+    pushDebugLog('source.set.url', source);
   }
-  reloadBeforeNextPlay = true;
+  stopCurrentPlayback();
+  if (shouldBePlaying) {
+    void play();
+  } else {
+    emitDebug();
+  }
 }
 
 export function setVolume(value) {
-  const next = Math.max(0, Math.min(1, value));
-  volume = next;
-  if (audio) audio.volume = volume;
+  volume = Math.max(0, Math.min(1, value));
+  if (currentGainNode && audioContext) {
+    currentGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+  }
+  if (htmlAudio) {
+    htmlAudio.volume = volume;
+  }
+  pushDebugLog('volume.set', String(volume));
+  emitDebug();
 }
 
 export function getVolume() {
   return volume;
 }
 
-export function play() {
-  ensureAudio();
-  if (!audio.src) {
-    audio.src = DEFAULT_BGM_SRC;
+export async function play() {
+  if (inflightPlayPromise) {
+    pushDebugLog('play.skip.inflight');
+    return inflightPlayPromise;
   }
+
   shouldBePlaying = true;
-  retryOnNextInteraction = true;
-
-  const alreadyPlaying = (
-    !audio.paused &&
-    !audio.ended &&
-    !audio.error &&
-    audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-  );
-  if (alreadyPlaying) {
-    clearRecoveryTimer();
-    reloadBeforeNextPlay = false;
-    retryOnNextInteraction = false;
-    setPlaybackState('playing');
-    return;
-  }
-
   setPlaybackState('loading');
-  const needsReload = (
-    reloadBeforeNextPlay ||
-    audio.ended ||
-    Boolean(audio.error) ||
-    audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE ||
-    audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-  );
-  if (needsReload) {
-    // Rebuild media state after stop/end/background suspension.
-    waitingForCanPlay = false;
-    audio.load();
-    reloadBeforeNextPlay = false;
-    if (audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      schedulePlayWhenReady();
-      scheduleRecovery();
-      return;
+  const playbackToken = ++activePlaybackToken;
+  pushDebugLog('play.call', `token=${playbackToken} interacted=${userInteracted}`);
+  inflightPlayPromise = (async () => {
+    try {
+      if (forceHtmlAudioFallback) {
+        await playViaHtmlAudio();
+        return;
+      }
+      const context = await resumeAudioContext();
+      const audioBuffer = await decodeCurrentSource(context);
+
+      if (!shouldBePlaying || playbackToken !== activePlaybackToken) {
+        pushDebugLog('play.cancelled', `token=${playbackToken}`);
+        return;
+      }
+
+      stopCurrentPlayback();
+
+      const gainNode = context.createGain();
+      gainNode.gain.setValueAtTime(volume, context.currentTime);
+      gainNode.connect(context.destination);
+
+      const sourceNode = context.createBufferSource();
+      sourceNode.buffer = audioBuffer;
+      sourceNode.loop = true;
+      sourceNode.connect(gainNode);
+      sourceNode.onended = () => {
+        if (currentSourceNode !== sourceNode) return;
+        pushDebugLog('source.ended');
+        currentSourceNode = null;
+        currentGainNode = null;
+        if (!shouldBePlaying) {
+          setPlaybackState('paused');
+        }
+        emitDebug();
+      };
+
+      currentSourceNode = sourceNode;
+      currentGainNode = gainNode;
+      sourceNode.start(0);
+      pushDebugLog('play.started', `token=${playbackToken}`);
+      setPlaybackState('playing');
+      emitDebug();
+    } catch (error) {
+      pushDebugLog('play.failed', summarizeError(error));
+      if (!forceHtmlAudioFallback && shouldFallbackToHtmlAudio(error)) {
+        forceHtmlAudioFallback = true;
+        pushDebugLog('fallback.enable', 'html-audio');
+        try {
+          await playViaHtmlAudio();
+          return;
+        } catch (fallbackError) {
+          pushDebugLog('fallback.failed', summarizeError(fallbackError));
+        }
+      }
+      setPlaybackState(userInteracted ? 'paused' : 'loading');
+      emitDebug();
+    } finally {
+      inflightPlayPromise = null;
     }
-  }
-  clearRecoveryTimer();
-  if (!userInteracted) {
-    // Some mobile/PWA environments do not fire pointerdown as expected,
-    // but a direct play attempt inside the click handler can still succeed.
-    safePlay();
-    return;
-  }
-  retryOnNextInteraction = false;
-  safePlay();
+  })();
+
+  return inflightPlayPromise;
 }
 
 export function pause() {
   shouldBePlaying = false;
-  clearRecoveryTimer();
+  activePlaybackToken += 1;
+  pushDebugLog('pause.call');
+  stopCurrentPlayback();
   setPlaybackState('paused');
-  if (audio) audio.pause();
+  inflightPlayPromise = null;
 }
 
 export function stop() {
-  if (!audio) return;
   shouldBePlaying = false;
-  clearRecoveryTimer();
-  waitingForCanPlay = false;
+  activePlaybackToken += 1;
+  pushDebugLog('stop.call');
+  stopCurrentPlayback();
   setPlaybackState('stopped');
-  audio.pause();
-  try {
-    audio.currentTime = 0;
-  } catch (err) {
-    // Some browsers can reject seeking before metadata is ready.
-  }
+  inflightPlayPromise = null;
 }
 
 export function getPlaybackState() {
@@ -261,5 +478,13 @@ export function subscribePlaybackState(listener) {
   listener(playbackState);
   return () => {
     stateListeners.delete(listener);
+  };
+}
+
+export function subscribeDebug(listener) {
+  debugListeners.add(listener);
+  listener(getDebugSnapshot());
+  return () => {
+    debugListeners.delete(listener);
   };
 }

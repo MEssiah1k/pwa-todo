@@ -1,13 +1,18 @@
+import { createScopedDbName } from './storage-scope.js?v=20260325-module-fix-1';
+
 const DB_NAME = 'todo-db';
 const STORE_NAME = 'todos';
 const DB_VERSION = 7;
 const SUMMARY_STORE = 'summaries';
 const META_STORE = 'meta';
 const RECURRENCE_STORE = 'recurrence_rules';
+const SCOPED_DB_NAME = createScopedDbName(DB_NAME);
+let openDbPromise = null;
+let legacyMigrationPromise = null;
 
-export function openDB() {
+function openDbByName(name) {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(name, DB_VERSION);
 
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -82,6 +87,73 @@ export function openDB() {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+function readAllFromStore(db, storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function writeAllToStore(db, storeName, rows) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    store.clear();
+    rows.forEach(row => store.put(row));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function migrateLegacyDbIfNeeded() {
+  if (legacyMigrationPromise) return legacyMigrationPromise;
+  legacyMigrationPromise = (async () => {
+    if (SCOPED_DB_NAME === DB_NAME) return;
+    if (typeof indexedDB.databases !== 'function') return;
+
+    let databases = [];
+    try {
+      databases = (await indexedDB.databases()) || [];
+    } catch (err) {
+      return;
+    }
+
+    const hasLegacyDb = databases.some(db => db && db.name === DB_NAME);
+    const hasScopedDb = databases.some(db => db && db.name === SCOPED_DB_NAME);
+    if (!hasLegacyDb || hasScopedDb) return;
+
+    const legacyDb = await openDbByName(DB_NAME);
+    const scopedDb = await openDbByName(SCOPED_DB_NAME);
+
+    try {
+      const storeNames = [STORE_NAME, SUMMARY_STORE, META_STORE, RECURRENCE_STORE];
+      for (const storeName of storeNames) {
+        const rows = await readAllFromStore(legacyDb, storeName);
+        if (!rows.length) continue;
+        await writeAllToStore(scopedDb, storeName, rows);
+      }
+    } finally {
+      legacyDb.close();
+      scopedDb.close();
+    }
+  })();
+
+  return legacyMigrationPromise;
+}
+
+export function openDB() {
+  if (!openDbPromise) {
+    openDbPromise = (async () => {
+      await migrateLegacyDbIfNeeded();
+      return openDbByName(SCOPED_DB_NAME);
+    })();
+  }
+  return openDbPromise;
 }
 
 export async function getAllTodos() {

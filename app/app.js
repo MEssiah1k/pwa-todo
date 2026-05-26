@@ -15,24 +15,35 @@ import {
   updateRecurrenceRule,
   deleteRecurrenceRule,
   getTodosByRuleId
-} from './db.js';
-import * as bgm from './bgm.js';
+} from './db.js?v=20260328-sync-fix-2';
+import * as bgm from './bgm.js?v=20260328-sync-fix-2';
+import {
+  createScopedStorageKey,
+  migrateLegacyLocalStorageKeys
+} from './storage-scope.js?v=20260328-sync-fix-2';
 import {
   initSync,
   syncNow,
   pushNow,
   pullNow,
   syncAllLocalToCloud,
+  dedupeLocalRecurrenceRules,
   getUserId,
   fetchRemoteKv,
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js';
+} from './sync.js?v=20260331-recurrence-sync-fix-1';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
 const dueInput = document.getElementById('todo-due');
+const todoFilterCategory = document.getElementById('todo-filter-category');
+const todoFilterPrevBtn = document.getElementById('todo-filter-prev');
+const todoFilterNextBtn = document.getElementById('todo-filter-next');
+const problemReviewOpenBtn = document.getElementById('problem-review-open');
+const todoQueuePanel = document.getElementById('todo-queue-panel');
+const todoQueueList = document.getElementById('todo-queue-list');
 const addBtn = document.getElementById('add-btn');
 const list = document.getElementById('todo-list');
 const completedList = document.getElementById('completed-list');
@@ -49,12 +60,10 @@ const timerTimelineSummary = document.getElementById('timer-timeline-summary');
 const contributionChart = document.getElementById('contribution-chart');
 const contributionSummary = document.getElementById('contribution-summary');
 const contributionTitle = document.getElementById('contribution-title');
-const dailyFatigueCard = document.getElementById('daily-fatigue-card');
-const fatigueYesBtn = document.getElementById('fatigue-yes-btn');
-const fatigueNoBtn = document.getElementById('fatigue-no-btn');
 const taskStatusChart = document.getElementById('task-status-chart');
 const taskStatusSummary = document.getElementById('task-status-summary');
 const taskStatusTitle = document.getElementById('task-status-title');
+const workPunchBtns = Array.from(document.querySelectorAll('.work-punch-head-btn'));
 const timelineEditModal = document.getElementById('timeline-edit-modal');
 const timelineEditCloseBtn = document.getElementById('timeline-edit-close');
 const timelineEditTitle = document.getElementById('timeline-edit-title');
@@ -65,9 +74,17 @@ const promptModal = document.getElementById('prompt-modal');
 const promptMessage = document.getElementById('prompt-message');
 const promptCancelBtn = document.getElementById('prompt-cancel');
 const promptConfirmBtn = document.getElementById('prompt-confirm');
-const dailySettlementModal = document.getElementById('daily-settlement-modal');
-const dailySettlementBody = document.getElementById('daily-settlement-body');
-const dailySettlementCloseBtn = document.getElementById('daily-settlement-close');
+const assistCustomModal = document.getElementById('assist-custom-modal');
+const assistCustomInput = document.getElementById('assist-custom-input');
+const assistCustomCloseBtn = document.getElementById('assist-custom-close');
+const assistCustomCancelBtn = document.getElementById('assist-custom-cancel');
+const assistCustomConfirmBtn = document.getElementById('assist-custom-confirm');
+const problemReviewModal = document.getElementById('problem-review-modal');
+const problemReviewCloseBtn = document.getElementById('problem-review-close');
+const problemReviewProgress = document.getElementById('problem-review-progress');
+const problemReviewQuestion = document.getElementById('problem-review-question');
+const problemReviewInput = document.getElementById('problem-review-input');
+const problemReviewConfirmBtn = document.getElementById('problem-review-confirm');
 
 const datePrevBtn = document.getElementById('date-prev');
 const dateNextBtn = document.getElementById('date-next');
@@ -126,17 +143,21 @@ const bgmStatusEl = document.getElementById('bgm-status');
 const timerVersionEl = document.getElementById('timer-version');
 const timerToggleBtn = document.getElementById('timer-toggle');
 const timerStopBtn = document.getElementById('timer-stop');
+const assistTimerActiveEl = document.getElementById('assist-timer-active');
+const assistTimerBarEl = document.getElementById('assist-timer-bar');
+const assistTimerRemainingEl = document.getElementById('assist-timer-remaining');
+const assistTimerToggleBtn = document.getElementById('assist-timer-toggle');
+const assistTimerStopBtn = document.getElementById('assist-timer-stop');
+const assistQuickBtns = Array.from(document.querySelectorAll('.assist-quick-btn'));
 const bgmFileInput = document.getElementById('bgm-file');
 const bgmToggleBtn = document.getElementById('bgm-toggle');
 const bgmModal = document.getElementById('bgm-modal');
 const bgmCloseBtn = document.getElementById('bgm-close');
 const bgmCurrentName = document.getElementById('bgm-current-name');
 const bgmVolume = document.getElementById('bgm-volume');
+const bgmDebugEl = document.getElementById('bgm-debug');
+const bgmDebugCopyBtn = document.getElementById('bgm-debug-copy');
 const alarmVolume = document.getElementById('alarm-volume');
-const regretCoinBalanceEl = document.getElementById('regret-coin-balance');
-const regretCoinStatusEl = document.getElementById('regret-coin-status');
-const regretCoinSpendInput = document.getElementById('regret-coin-spend-input');
-const regretCoinSpendBtn = document.getElementById('regret-coin-spend-btn');
 const APP_VERSION = 'v0.1.3';
 const RECURRENCE_SKIP_META_KEY = 'recurrenceSkips';
 const CONTRIBUTION_START_YEAR = 2026;
@@ -145,51 +166,69 @@ const TIMER_TIMELINE_ACTIVE_META_KEY = 'timerTimelineActive';
 const TIMER_TIMELINE_UPDATED_AT_META_KEY = 'timerTimelineUpdatedAt';
 const TIMER_TIMELINE_ACTIVE_UPDATED_AT_META_KEY = 'timerTimelineActiveUpdatedAt';
 const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
-const TIMER_STATE_LOCAL_KEY = 'pwaTodo.timerState';
-const TIMER_TIMELINE_LOCAL_KEY = 'pwaTodo.timerTimelineByDate';
-const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = 'pwaTodo.timerTimelineActive';
-const TIMER_LEASE_KEY = 'pwaTodo.timerLease';
+const TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerState');
+const ASSIST_TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerState');
+const ASSIST_TIMER_PRESETS_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerPresets');
+const WORK_PUNCH_LOCAL_KEY = createScopedStorageKey('pwaTodo.workPunchRecords');
+const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
+const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
+const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
 const TIMER_LEASE_TTL_MS = 4000;
 const TIMER_LEASE_HEARTBEAT_MS = 2000;
-const REGRET_COIN_LEDGER_META_KEY = 'regretCoinLedger';
-const REGRET_COIN_LAST_SYNC_AT_META_KEY = 'regretCoinLedgerUpdatedAt';
-const REGRET_COIN_LEDGER_REMOTE_KEY = 'regret_coin_ledger';
-const DAILY_SETTLEMENT_REMOTE_PREFIX = 'daily_settlement:';
 const NATURAL_DAY_META_KEY = 'lastKnownNaturalDate';
-const DAILY_FATIGUE_META_KEY = 'dailyFatigueAnswers';
-const DAILY_FATIGUE_UPDATED_AT_META_KEY = 'dailyFatigueAnswersUpdatedAt';
-const DAILY_FATIGUE_REMOTE_KEY = 'daily_fatigue_answers';
 
 let todos = [];
+let draggedTodoId = null;
+let draggedTodoGroup = null;
+let suppressTodoClickUntil = 0;
 let summaries = [];
 let selectedDate = formatDateLocal(new Date());
 let migrationDone = false;
 let recurrenceRules = [];
 let editingRecurrenceRuleId = null;
-const MAX_IN_PROGRESS_TODOS = 2;
-const IN_PROGRESS_LOCAL_KEY = 'pwaTodo.todoInProgress';
+const MAX_IN_PROGRESS_TODOS = 3;
+const IN_PROGRESS_LOCAL_KEY = createScopedStorageKey('pwaTodo.todoInProgress');
 let inProgressTodos = new Map();
 let restoreInProgressPromise = null;
 const runningTimeEls = new Map();
 let runningTicker = null;
 let contributionScores = new Map();
-let taskCompletionStatusByDate = new Map();
+let taskSummaryStatusByDate = new Map();
 let timerTimelineByDate = {};
 let activeTimerSegment = null;
-let regretCoinLedger = [];
-let dailyFatigueAnswers = {};
+let workPunchRecords = {};
 let timelineEditingSegmentId = null;
 let timelineEditingDate = '';
 let timelineEditingDraft = [];
 let timelineEditingInitialSnapshot = '';
 let promptResolver = null;
-let regretCoinStatusTimer = null;
+let promptDismissOnBackdrop = true;
+let assistCustomResolver = null;
+let problemReviewStepIndex = 0;
+let problemReviewAnswers = [];
 let daySettlementTimer = null;
 let contributionResizeRaf = 0;
 let contributionHalfKey = '';
 let contributionFollowCurrentHalf = true;
 let contributionLastCurrentHalfKey = '';
+let taskStatusMonthKey = '';
+let taskStatusFollowCurrentMonth = true;
+let taskStatusLastCurrentMonthKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const PROBLEM_REVIEW_QUESTIONS = [
+  '1. 我现在应该推进的主方向是什么？',
+  '2. 在这个方向里，最卡我的点是什么？',
+  '3. 我现在能做的最小一步是什么？'
+];
+const TODO_FILTER_SEQUENCE = ['All', 'Work', 'Life', 'Health', 'Social', 'Growth', 'Leisure', 'Plan'];
+
+migrateLegacyLocalStorageKeys([
+  'pwaTodo.timerState',
+  'pwaTodo.timerTimelineByDate',
+  'pwaTodo.timerTimelineActive',
+  'pwaTodo.timerLease',
+  'pwaTodo.todoInProgress'
+]);
 
 // -------- Date helpers --------
 function formatDateLocal(date) {
@@ -293,7 +332,11 @@ function resolvePrompt(result) {
   if (!promptResolver) return;
   const resolver = promptResolver;
   promptResolver = null;
-  if (promptModal) promptModal.classList.add('hidden');
+  promptDismissOnBackdrop = true;
+  if (promptModal) {
+    promptModal.classList.add('hidden');
+    promptModal.classList.remove('is-top-aligned');
+  }
   resolver(result);
 }
 
@@ -306,18 +349,160 @@ function openPromptModal(message, options = {}) {
   promptConfirmBtn.textContent = options.confirmText || '确定';
   promptCancelBtn.textContent = options.cancelText || '取消';
   promptCancelBtn.classList.toggle('hidden', options.showCancel === false);
+  promptDismissOnBackdrop = options.dismissOnBackdrop !== false;
+  promptModal.classList.toggle('is-top-aligned', options.position === 'top');
   promptModal.classList.remove('hidden');
   return new Promise(resolve => {
     promptResolver = resolve;
+    requestAnimationFrame(() => {
+      promptConfirmBtn.focus();
+    });
   });
 }
 
-function getYesterdayDateStr(baseDateStr = formatDateLocal(new Date())) {
-  return formatDateLocal(shiftDate(parseDateLocal(baseDateStr), -1));
+function resolveAssistCustomModal(result) {
+  if (!assistCustomResolver) return;
+  const resolver = assistCustomResolver;
+  assistCustomResolver = null;
+  if (assistCustomModal) assistCustomModal.classList.add('hidden');
+  resolver(result);
 }
 
-function getDailySettlementKey(dateStr) {
-  return `${DAILY_SETTLEMENT_REMOTE_PREFIX}${dateStr}`;
+function openAssistCustomModal(defaultValue = '') {
+  if (!assistCustomModal || !assistCustomInput || !assistCustomConfirmBtn || !assistCustomCancelBtn) {
+    return Promise.resolve(null);
+  }
+  if (assistCustomResolver) resolveAssistCustomModal(null);
+  assistCustomInput.value = defaultValue;
+  assistCustomModal.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    assistCustomInput.focus();
+    assistCustomInput.select();
+  });
+  return new Promise(resolve => {
+    assistCustomResolver = resolve;
+  });
+}
+
+function closeProblemReviewModal(reset = true) {
+  if (problemReviewModal) problemReviewModal.classList.add('hidden');
+  if (!reset) return;
+  problemReviewStepIndex = 0;
+  problemReviewAnswers = [];
+  if (problemReviewInput) problemReviewInput.value = '';
+}
+
+function renderProblemReviewStep() {
+  if (!problemReviewProgress || !problemReviewQuestion || !problemReviewInput) return;
+  const question = PROBLEM_REVIEW_QUESTIONS[problemReviewStepIndex] || '';
+  problemReviewProgress.textContent = `问题 ${problemReviewStepIndex + 1} / ${PROBLEM_REVIEW_QUESTIONS.length}`;
+  problemReviewQuestion.textContent = question;
+  problemReviewInput.value = problemReviewAnswers[problemReviewStepIndex] || '';
+  requestAnimationFrame(() => {
+    problemReviewInput.focus();
+    problemReviewInput.select();
+  });
+}
+
+function openProblemReviewModal() {
+  if (!problemReviewModal || !problemReviewInput) return;
+  problemReviewStepIndex = 0;
+  problemReviewAnswers = [];
+  problemReviewModal.classList.remove('hidden');
+  renderProblemReviewStep();
+}
+
+function submitProblemReviewStep() {
+  if (!problemReviewInput) return;
+  const answer = problemReviewInput.value.trim();
+  if (!answer) {
+    setStatus('请输入回答');
+    problemReviewInput.focus();
+    return;
+  }
+  problemReviewAnswers[problemReviewStepIndex] = answer;
+  if (problemReviewStepIndex >= PROBLEM_REVIEW_QUESTIONS.length - 1) {
+    void completeProblemReview();
+    return;
+  }
+  problemReviewStepIndex += 1;
+  renderProblemReviewStep();
+}
+
+function buildProblemReviewSummaryBlock(answers) {
+  return [
+    '【梳理问题】',
+    `1. 我现在应该推进的主方向是什么？`,
+    answers[0] || '',
+    '',
+    `2. 在这个方向里，最卡我的点是什么？`,
+    answers[1] || '',
+    '',
+    `3. 我现在能做的最小一步是什么？`,
+    answers[2] || ''
+  ].join('\n');
+}
+
+async function appendProblemReviewToTodaySummary(answers) {
+  const today = getTodayDateStr();
+  const now = new Date().toISOString();
+  const block = buildProblemReviewSummaryBlock(answers);
+  const todaySummaries = await getSummariesByDate(today);
+  const existing = todaySummaries
+    .filter(summary => !summary.deletedAt)
+    .sort((a, b) => {
+      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
+      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
+      return bTime - aTime;
+    })[0];
+
+  if (existing) {
+    const baseText = typeof existing.text === 'string' ? existing.text.trim() : '';
+    const nextText = baseText ? `${baseText}\n\n${block}` : block;
+    const nextSummary = {
+      ...existing,
+      text: nextText,
+      updatedAt: now,
+      deletedAt: null
+    };
+    await updateSummary(nextSummary);
+    if (selectedDate === today) {
+      summaries = summaries.map(summary =>
+        summary.id === nextSummary.id ? nextSummary : summary
+      );
+      summaryInput.value = nextText;
+      autoResizeSummary();
+    }
+  } else {
+    const initResult = syncInitPromise ? await syncInitPromise : null;
+    const userId = currentUserId ||
+      (initResult && initResult.userId ? initResult.userId : ensureUserId());
+    const nextSummary = {
+      date: today,
+      text: block,
+      rating: 0,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      uuid: generateUUID(),
+      userId
+    };
+    const id = await addSummary(nextSummary);
+    if (selectedDate === today) {
+      summaries = [...summaries, { ...nextSummary, id }];
+      summaryInput.value = block;
+      autoResizeSummary();
+    }
+  }
+  triggerChangeSync();
+  await renderContributionChart();
+}
+
+async function completeProblemReview() {
+  const answers = [...problemReviewAnswers];
+  closeProblemReviewModal(true);
+  await appendProblemReviewToTodaySummary(answers);
+  setStatus('已完成梳理问题，并追加到今日总结');
 }
 
 function normalizeTodoPromptText(text) {
@@ -331,412 +516,7 @@ function shouldPromptMorningWakeup(todo) {
   return normalizeTodoPromptText(todo && todo.text) === '刷牙2';
 }
 
-function getTodayFocusCount(dateStr) {
-  return getTimerTimelineSegmentsForDate(dateStr)
-    .filter(segment => !segment._active)
-    .length;
-}
-
-function getSettlementLevel(rating) {
-  const normalized = Number.isFinite(rating) ? rating : 0;
-  return Math.max(0, Math.min(10, Math.round(normalized * 2)));
-}
-
-function getSettlementAction(level) {
-  if (level >= 10) {
-    return {
-      type: 'reward',
-      coins: 4,
-      text: '获得奖励：4 个后悔币'
-    };
-  }
-  if (level >= 9) {
-    return {
-      type: 'reward',
-      coins: 3,
-      text: '获得奖励：3 个后悔币'
-    };
-  }
-  if (level >= 8) {
-    return {
-      type: 'reward',
-      coins: 2,
-      text: '获得奖励：2 个后悔币'
-    };
-  }
-  if (level < 2) {
-    return {
-      type: 'penalty',
-      coins: 0,
-      text: '需要惩罚：400r投资'
-    };
-  }
-  if (level < 4) {
-    return {
-      type: 'penalty',
-      coins: 0,
-      text: '需要惩罚：200r投资'
-    };
-  }
-  if (level < 6) {
-    return {
-      type: 'penalty',
-      coins: 0,
-      text: '需要惩罚：100r投资'
-    };
-  }
-  return {
-    type: 'neutral',
-    coins: 0,
-    text: '无奖励，无惩罚'
-  };
-}
-
-function getSettlementEncouragement(level, actionType) {
-  if (actionType === 'reward') return '今天做得很稳，继续把高质量专注延续下去。';
-  if (actionType === 'penalty') return '今天没有达标，按规则执行惩罚，明天把节奏拉回来。';
-  if (level >= 6) return '已经过线了，再多一点稳定输出就能拿到奖励。';
-  return '先别找借口，明天至少把基础专注次数补回来。';
-}
-
-function normalizeRegretCoinLedger(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter(item => item && typeof item.id === 'string')
-    .map(item => ({
-      id: item.id,
-      type: item.type === 'spend' ? 'spend' : 'reward',
-      amount: Math.max(0, Math.floor(Number(item.amount) || 0)),
-      createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
-      sourceDate: typeof item.sourceDate === 'string' ? item.sourceDate : '',
-      note: typeof item.note === 'string' ? item.note : ''
-    }))
-    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-}
-
-function mergeRegretCoinLedger(localLedger, remoteLedger) {
-  const merged = new Map();
-  for (const item of [...normalizeRegretCoinLedger(localLedger), ...normalizeRegretCoinLedger(remoteLedger)]) {
-    const existing = merged.get(item.id);
-    if (!existing || (item.createdAt || '') > (existing.createdAt || '')) {
-      merged.set(item.id, item);
-    }
-  }
-  return Array.from(merged.values()).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-}
-
-function getRegretCoinBalance(ledger = regretCoinLedger) {
-  return normalizeRegretCoinLedger(ledger).reduce((sum, item) => {
-    if (item.type === 'reward') return sum + item.amount;
-    if (item.type === 'spend') return sum - item.amount;
-    return sum;
-  }, 0);
-}
-
-async function persistRegretCoinLedger(updatedAt = new Date().toISOString()) {
-  const normalized = normalizeRegretCoinLedger(regretCoinLedger);
-  regretCoinLedger = normalized;
-  await Promise.all([
-    setMeta(REGRET_COIN_LEDGER_META_KEY, normalized),
-    setMeta(REGRET_COIN_LAST_SYNC_AT_META_KEY, updatedAt)
-  ]);
-}
-
-async function syncRegretCoinLedgerFromCloud() {
-  const [localRecord, localUpdatedAtRecord, remoteRow] = await Promise.all([
-    getMeta(REGRET_COIN_LEDGER_META_KEY),
-    getMeta(REGRET_COIN_LAST_SYNC_AT_META_KEY),
-    fetchRemoteKv(REGRET_COIN_LEDGER_REMOTE_KEY)
-  ]);
-  const localLedger = normalizeRegretCoinLedger(localRecord ? localRecord.value : []);
-  const remoteLedger = normalizeRegretCoinLedger(remoteRow && remoteRow.value ? remoteRow.value.ops : []);
-  const mergedLedger = mergeRegretCoinLedger(localLedger, remoteLedger);
-  const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
-  const localUpdatedAt = localUpdatedAtRecord && typeof localUpdatedAtRecord.value === 'string'
-    ? localUpdatedAtRecord.value
-    : '';
-
-  regretCoinLedger = mergedLedger;
-  const remoteSnapshot = JSON.stringify(remoteLedger);
-  const mergedSnapshot = JSON.stringify(mergedLedger);
-  const mergedUpdatedAt = [remoteUpdatedAt, localUpdatedAt]
-    .filter(Boolean)
-    .sort()
-    .slice(-1)[0] || new Date().toISOString();
-  await persistRegretCoinLedger(mergedUpdatedAt);
-
-  if (syncReady && (remoteUpdatedAt < mergedUpdatedAt || remoteSnapshot !== mergedSnapshot)) {
-    await upsertRemoteKv(REGRET_COIN_LEDGER_REMOTE_KEY, { ops: mergedLedger }, mergedUpdatedAt);
-  }
-  renderRegretCoinSection();
-}
-
-async function reconcileSettlementRewardsFromCloud() {
-  if (!syncReady) return;
-  const rows = await fetchRemoteKvsByPrefix(DAILY_SETTLEMENT_REMOTE_PREFIX);
-  if (!rows.length) return;
-  const existingIds = new Set(normalizeRegretCoinLedger(regretCoinLedger).map(item => item.id));
-  const missingRewards = [];
-
-  rows.forEach(row => {
-    const value = row && row.value && typeof row.value === 'object' ? row.value : null;
-    if (!value || value.actionType !== 'reward' || !value.date || !value.regretCoinReward) return;
-    const rewardId = `reward:${value.date}`;
-    if (existingIds.has(rewardId)) return;
-    missingRewards.push({
-      id: rewardId,
-      type: 'reward',
-      amount: Math.max(0, Math.floor(Number(value.regretCoinReward) || 0)),
-      createdAt: value.settledAt || row.updated_at || new Date().toISOString(),
-      sourceDate: value.date,
-      note: '每日结算奖励'
-    });
-  });
-
-  if (!missingRewards.length) return;
-  regretCoinLedger = mergeRegretCoinLedger(regretCoinLedger, missingRewards);
-  const updatedAt = new Date().toISOString();
-  await persistRegretCoinLedger(updatedAt);
-  await upsertRemoteKv(REGRET_COIN_LEDGER_REMOTE_KEY, { ops: regretCoinLedger }, updatedAt);
-  renderRegretCoinSection();
-}
-
-function renderRegretCoinSection() {
-  if (regretCoinBalanceEl) {
-    regretCoinBalanceEl.textContent = String(Math.max(0, getRegretCoinBalance()));
-  }
-}
-
-function normalizeDailyFatigueAnswers(value) {
-  const source = value && typeof value === 'object' ? value : {};
-  return Object.fromEntries(
-    Object.entries(source)
-      .filter(([dateStr, item]) => Boolean(dateStr) && item && typeof item === 'object')
-      .map(([dateStr, item]) => {
-        const answer = item.answer === 'yes' || item.answer === 'no' ? item.answer : null;
-        const updatedAt = typeof item.updatedAt === 'string' && item.updatedAt
-          ? item.updatedAt
-          : '';
-        return [dateStr, { answer, updatedAt }];
-      })
-      .filter(([, item]) => Boolean(item.answer))
-  );
-}
-
-function getDailyFatigueAnswer(dateStr = selectedDate) {
-  const record = dailyFatigueAnswers && typeof dailyFatigueAnswers === 'object'
-    ? dailyFatigueAnswers[dateStr]
-    : null;
-  return record && (record.answer === 'yes' || record.answer === 'no')
-    ? record.answer
-    : null;
-}
-
-function shouldShowDailyFatigueQuestion(dateStr = selectedDate, now = new Date()) {
-  return dateStr === formatDateLocal(now) && now.getHours() === 23;
-}
-
-function renderDailyFatigueQuestion() {
-  const isVisible = shouldShowDailyFatigueQuestion(selectedDate);
-  if (dailyFatigueCard) {
-    dailyFatigueCard.classList.toggle('hidden', !isVisible);
-  }
-  const answer = getDailyFatigueAnswer(selectedDate);
-  const buttonStates = [
-    [fatigueYesBtn, answer === 'yes'],
-    [fatigueNoBtn, answer === 'no']
-  ];
-  buttonStates.forEach(([button, selected]) => {
-    if (!button) return;
-    button.classList.toggle('is-selected', selected);
-    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-  });
-}
-
-async function persistDailyFatigueAnswers(updatedAt = new Date().toISOString()) {
-  dailyFatigueAnswers = normalizeDailyFatigueAnswers(dailyFatigueAnswers);
-  await Promise.all([
-    setMeta(DAILY_FATIGUE_META_KEY, dailyFatigueAnswers),
-    setMeta(DAILY_FATIGUE_UPDATED_AT_META_KEY, updatedAt)
-  ]);
-}
-
-function mergeDailyFatigueAnswers(localAnswers, remoteAnswers) {
-  const merged = {};
-  const allDates = new Set([
-    ...Object.keys(localAnswers || {}),
-    ...Object.keys(remoteAnswers || {})
-  ]);
-  allDates.forEach(dateStr => {
-    const localRecord = localAnswers && localAnswers[dateStr] ? localAnswers[dateStr] : null;
-    const remoteRecord = remoteAnswers && remoteAnswers[dateStr] ? remoteAnswers[dateStr] : null;
-    if (!localRecord && remoteRecord) {
-      merged[dateStr] = remoteRecord;
-      return;
-    }
-    if (localRecord && !remoteRecord) {
-      merged[dateStr] = localRecord;
-      return;
-    }
-    if (!localRecord && !remoteRecord) return;
-    merged[dateStr] = (remoteRecord.updatedAt || '') > (localRecord.updatedAt || '')
-      ? remoteRecord
-      : localRecord;
-  });
-  return normalizeDailyFatigueAnswers(merged);
-}
-
-async function syncDailyFatigueAnswersFromCloud() {
-  const [localRecord, localUpdatedAtRecord, remoteRow] = await Promise.all([
-    getMeta(DAILY_FATIGUE_META_KEY),
-    getMeta(DAILY_FATIGUE_UPDATED_AT_META_KEY),
-    fetchRemoteKv(DAILY_FATIGUE_REMOTE_KEY)
-  ]);
-  const localAnswers = normalizeDailyFatigueAnswers(localRecord ? localRecord.value : {});
-  const remoteAnswers = normalizeDailyFatigueAnswers(remoteRow && remoteRow.value ? remoteRow.value.answers : {});
-  const mergedAnswers = mergeDailyFatigueAnswers(localAnswers, remoteAnswers);
-  const localUpdatedAt = localUpdatedAtRecord && typeof localUpdatedAtRecord.value === 'string'
-    ? localUpdatedAtRecord.value
-    : '';
-  const remoteUpdatedAt = remoteRow && remoteRow.updated_at ? remoteRow.updated_at : '';
-  const mergedUpdatedAt = [localUpdatedAt, remoteUpdatedAt]
-    .filter(Boolean)
-    .sort()
-    .slice(-1)[0] || new Date().toISOString();
-
-  dailyFatigueAnswers = mergedAnswers;
-  await persistDailyFatigueAnswers(mergedUpdatedAt);
-
-  const remoteSnapshot = JSON.stringify(remoteAnswers);
-  const mergedSnapshot = JSON.stringify(mergedAnswers);
-  if (syncReady && (remoteUpdatedAt < mergedUpdatedAt || remoteSnapshot !== mergedSnapshot)) {
-    await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: mergedAnswers }, mergedUpdatedAt);
-  }
-  renderDailyFatigueQuestion();
-}
-
-async function restoreDailyFatigueAnswersLocal() {
-  const record = await getMeta(DAILY_FATIGUE_META_KEY);
-  dailyFatigueAnswers = normalizeDailyFatigueAnswers(record ? record.value : {});
-  renderDailyFatigueQuestion();
-}
-
-async function setDailyFatigueAnswer(answer) {
-  const nextAnswer = answer === 'yes' ? 'yes' : answer === 'no' ? 'no' : null;
-  if (!nextAnswer) return;
-  const currentAnswer = getDailyFatigueAnswer(selectedDate);
-  const updatedAt = new Date().toISOString();
-  if (currentAnswer === nextAnswer) {
-    const nextAnswers = { ...dailyFatigueAnswers };
-    delete nextAnswers[selectedDate];
-    dailyFatigueAnswers = nextAnswers;
-    await persistDailyFatigueAnswers(updatedAt);
-    renderDailyFatigueQuestion();
-    if (syncReady) {
-      await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: dailyFatigueAnswers }, updatedAt);
-    }
-    return;
-  }
-  dailyFatigueAnswers = {
-    ...dailyFatigueAnswers,
-    [selectedDate]: {
-      answer: nextAnswer,
-      updatedAt
-    }
-  };
-  await persistDailyFatigueAnswers(updatedAt);
-  renderDailyFatigueQuestion();
-  if (syncReady) {
-    await upsertRemoteKv(DAILY_FATIGUE_REMOTE_KEY, { answers: dailyFatigueAnswers }, updatedAt);
-  }
-}
-
-function setRegretCoinStatus(message) {
-  if (!regretCoinStatusEl) return;
-  regretCoinStatusEl.textContent = message;
-  if (regretCoinStatusTimer) clearTimeout(regretCoinStatusTimer);
-  if (!message) return;
-  regretCoinStatusTimer = setTimeout(() => {
-    if (regretCoinStatusEl.textContent === message) regretCoinStatusEl.textContent = '';
-  }, 1800);
-}
-
-async function appendRegretCoinEntry(entry) {
-  await syncRegretCoinLedgerFromCloud();
-  regretCoinLedger = mergeRegretCoinLedger(regretCoinLedger, [entry]);
-  const updatedAt = entry.createdAt || new Date().toISOString();
-  await persistRegretCoinLedger(updatedAt);
-  if (syncReady) {
-    await upsertRemoteKv(REGRET_COIN_LEDGER_REMOTE_KEY, { ops: regretCoinLedger }, updatedAt);
-  }
-  renderRegretCoinSection();
-}
-
-async function consumeRegretCoins(amount) {
-  await syncRegretCoinLedgerFromCloud();
-  const balance = getRegretCoinBalance();
-  if (amount > balance) return false;
-  const createdAt = new Date().toISOString();
-  await appendRegretCoinEntry({
-    id: generateUUID(),
-    type: 'spend',
-    amount,
-    createdAt,
-    note: '手动消耗'
-  });
-  return true;
-}
-
-function buildDailySettlement(dateStr, rating, focusCount) {
-  const level = getSettlementLevel(rating);
-  const action = getSettlementAction(level);
-  return {
-    date: dateStr,
-    rating: Number.isFinite(rating) ? rating : 0,
-    level,
-    focusCount,
-    actionType: action.type,
-    actionText: action.text,
-    regretCoinReward: action.coins,
-    encouragement: getSettlementEncouragement(level, action.type),
-    settledAt: new Date().toISOString()
-  };
-}
-
-function openDailySettlementModal(settlement, balance) {
-  if (!dailySettlementModal || !dailySettlementBody) {
-    window.alert([
-      `日期：${settlement.date}`,
-      `专注次数：${settlement.focusCount}`,
-      settlement.actionText,
-      `目前后悔币：${balance}`,
-      `鼓励语：${settlement.encouragement}`
-    ].join('\n'));
-    return;
-  }
-  dailySettlementBody.innerHTML = '';
-  const lines = [
-    ['日期', settlement.date],
-    ['专注次数', `${settlement.focusCount}`],
-    ['星星等级', `${settlement.level}/10`],
-    ['结算结果', settlement.actionText],
-    ['目前后悔币个数', `${balance}`],
-    ['鼓励语', settlement.encouragement]
-  ];
-  lines.forEach(([label, value], index) => {
-    const row = document.createElement(index === 3 ? 'div' : 'p');
-    if (index === 3) row.className = 'settlement-highlight';
-    row.innerHTML = `<span class="settlement-label">${label}：</span>${value}`;
-    dailySettlementBody.appendChild(row);
-  });
-  dailySettlementModal.classList.remove('hidden');
-}
-
-function closeDailySettlementModal() {
-  if (dailySettlementModal) dailySettlementModal.classList.add('hidden');
-}
-
-async function settlePreviousDayIfNeeded(options = {}) {
+async function syncNaturalDayState(options = {}) {
   const today = formatDateLocal(new Date());
   const inProgressRecord = readLocalJson(IN_PROGRESS_LOCAL_KEY);
   if (inProgressRecord && inProgressRecord.date && inProgressRecord.date !== today) {
@@ -752,51 +532,6 @@ async function settlePreviousDayIfNeeded(options = {}) {
 
   if (!options.force && lastKnownDay === today) return;
   await setMeta(NATURAL_DAY_META_KEY, today);
-
-  const targetDate = getYesterdayDateStr(today);
-  if (!targetDate) return;
-
-  const existingRemoteSettlement = await fetchRemoteKv(getDailySettlementKey(targetDate));
-  if (existingRemoteSettlement && existingRemoteSettlement.value) {
-    await syncRegretCoinLedgerFromCloud();
-    renderRegretCoinSection();
-    return;
-  }
-
-  const targetSummaries = await getSummariesByDate(targetDate);
-  const latestSummary = getLatestSummaryRecord(targetSummaries);
-  const rating = latestSummary && typeof latestSummary.rating === 'number' ? latestSummary.rating : 0;
-  const focusCount = getTodayFocusCount(targetDate);
-  const settlement = buildDailySettlement(targetDate, rating, focusCount);
-  await syncRegretCoinLedgerFromCloud();
-
-  const inserted = await insertRemoteKvIfAbsent(
-    getDailySettlementKey(targetDate),
-    settlement,
-    settlement.settledAt
-  );
-
-  if (!inserted) {
-    const remoteSettlement = await fetchRemoteKv(getDailySettlementKey(targetDate));
-    await syncRegretCoinLedgerFromCloud();
-    return;
-  }
-
-  let finalSettlement = settlement;
-  if (settlement.actionType === 'reward') {
-    await appendRegretCoinEntry({
-      id: `reward:${targetDate}`,
-      type: 'reward',
-      amount: settlement.regretCoinReward,
-      createdAt: settlement.settledAt,
-      sourceDate: targetDate,
-      note: '每日结算奖励'
-    });
-  } else {
-    renderRegretCoinSection();
-  }
-  const balance = Math.max(0, getRegretCoinBalance());
-  openDailySettlementModal(finalSettlement, balance);
 }
 
 function getContributionHalfPeriod(date = new Date()) {
@@ -815,6 +550,24 @@ function formatContributionHalfLabel(period) {
 
 function formatContributionHalfTitle(period) {
   return `${period.year}${period.half === 1 ? '上' : '下'}半年热力图`;
+}
+
+function getContributionMonthPeriod(date = new Date()) {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  return {
+    year,
+    month,
+    key: `${year}-${String(month).padStart(2, '0')}`
+  };
+}
+
+function formatContributionMonthLabel(period) {
+  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+}
+
+function formatContributionMonthTitle(period) {
+  return `${period.year}年${period.month}月总结图`;
 }
 
 function getContributionHalfRange(period) {
@@ -838,6 +591,29 @@ function buildContributionHalfPeriods(today = new Date()) {
   return periods;
 }
 
+function getContributionMonthRange(period) {
+  return {
+    startDate: new Date(period.year, period.month - 1, 1),
+    endDate: new Date(period.year, period.month, 0)
+  };
+}
+
+function buildContributionMonthPeriods(today = new Date()) {
+  const current = getContributionMonthPeriod(today);
+  const periods = [];
+  for (let year = CONTRIBUTION_START_YEAR; year <= current.year; year += 1) {
+    const maxMonth = year === current.year ? current.month : 12;
+    for (let month = 1; month <= maxMonth; month += 1) {
+      periods.push({
+        year,
+        month,
+        key: `${year}-${String(month).padStart(2, '0')}`
+      });
+    }
+  }
+  return periods;
+}
+
 function getActiveContributionPeriod(periods, currentPeriod) {
   if (!periods.length) return null;
   if (
@@ -854,18 +630,49 @@ function getActiveContributionPeriod(periods, currentPeriod) {
   return periods.find(period => period.key === contributionHalfKey) || currentPeriod;
 }
 
+function getActiveTaskStatusMonth(periods, currentPeriod) {
+  if (!periods.length) return null;
+  if (
+    taskStatusFollowCurrentMonth &&
+    taskStatusLastCurrentMonthKey &&
+    taskStatusLastCurrentMonthKey !== currentPeriod.key
+  ) {
+    taskStatusMonthKey = currentPeriod.key;
+  }
+  taskStatusLastCurrentMonthKey = currentPeriod.key;
+  if (!taskStatusMonthKey || !periods.some(period => period.key === taskStatusMonthKey)) {
+    taskStatusMonthKey = currentPeriod.key;
+  }
+  return periods.find(period => period.key === taskStatusMonthKey) || currentPeriod;
+}
+
 function updateContributionCellSize(wrapper) {
   if (!wrapper) return;
-  const weekCount = Number(wrapper.style.getPropertyValue('--weeks'));
-  if (!Number.isFinite(weekCount) || weekCount <= 0) return;
+  const columnCount = Number(
+    wrapper.style.getPropertyValue('--contrib-columns') || wrapper.style.getPropertyValue('--weeks')
+  );
+  if (!Number.isFinite(columnCount) || columnCount <= 0) return;
   const styles = getComputedStyle(wrapper);
   const labelWidth = parseFloat(styles.getPropertyValue('--contrib-label-width')) || 24;
   const gap = parseFloat(styles.getPropertyValue('--contrib-gap')) || 2;
   const gridGap = parseFloat(styles.gap) || 6;
-  const chartWidth = wrapper.clientWidth;
-  const cellsWidth = Math.max(0, chartWidth - labelWidth - gridGap);
+  const isTransposed = wrapper.classList.contains('is-transposed');
+  let chartWidth = wrapper.clientWidth;
+  if (isTransposed && wrapper.parentElement) {
+    const layoutStyles = getComputedStyle(wrapper.parentElement);
+    const layoutGap = parseFloat(layoutStyles.gap) || 0;
+    const periods = wrapper.parentElement.querySelector('.contribution-periods');
+    const periodsWidth = periods ? periods.clientWidth : 0;
+    chartWidth = Math.max(chartWidth, wrapper.parentElement.clientWidth - periodsWidth - layoutGap);
+  }
+  const useLabelColumn = !isTransposed;
+  const cellsWidth = Math.max(0, chartWidth - (useLabelColumn ? labelWidth + gridGap : 0));
   const minSize = window.innerWidth <= 520 ? 8 : 10;
-  const size = Math.max(minSize, Math.floor((cellsWidth - gap * (weekCount - 1)) / weekCount));
+  const autoSize = Math.floor((cellsWidth - gap * (columnCount - 1)) / columnCount);
+  const maxSize = isTransposed
+    ? (window.innerWidth <= 520 ? 24 : 30)
+    : Number.POSITIVE_INFINITY;
+  const size = Math.max(minSize, Math.min(maxSize, autoSize));
   wrapper.style.setProperty('--contrib-cell-size', `${size}px`);
 }
 
@@ -949,11 +756,78 @@ async function migrateMissingTodoDates() {
   if (missingDateTodos.length) triggerChangeSync();
 }
 
+function normalizeTodoName(text) {
+  return typeof text === 'string' ? text.trim() : '';
+}
+
+function compareTodoKeepPriority(a, b) {
+  const aCompleted = Boolean(a && a.completed);
+  const bCompleted = Boolean(b && b.completed);
+  if (aCompleted !== bCompleted) return aCompleted ? -1 : 1;
+  const aUpdated = a.updatedAt || a.createdAt || '';
+  const bUpdated = b.updatedAt || b.createdAt || '';
+  if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+  const aCreated = a.createdAt || '';
+  const bCreated = b.createdAt || '';
+  if (aCreated !== bCreated) return bCreated.localeCompare(aCreated);
+  return (b.id || 0) - (a.id || 0);
+}
+
+async function hasTodoWithSameText(date, text, excludeId = null) {
+  const normalizedText = normalizeTodoName(text);
+  if (!date || !normalizedText) return false;
+  const sameDateTodos = await getTodosByDate(date);
+  return sameDateTodos.some(todo =>
+    todo &&
+    !todo.deletedAt &&
+    todo.id !== excludeId &&
+    normalizeTodoName(todo.text) === normalizedText
+  );
+}
+
+async function dedupeTodosForDate(date) {
+  if (!date) return false;
+  const sameDateTodos = await getTodosByDate(date);
+  const groups = new Map();
+  const now = new Date().toISOString();
+  const duplicates = [];
+
+  sameDateTodos.forEach(todo => {
+    if (!todo || todo.deletedAt) return;
+    const key = normalizeTodoName(todo.text);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(todo);
+  });
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort(compareTodoKeepPriority);
+    duplicates.push(...group.slice(1));
+  }
+
+  if (!duplicates.length) return false;
+
+  await Promise.all(
+    duplicates.map(todo =>
+      updateTodo({
+        ...todo,
+        deletedAt: now,
+        updatedAt: now
+      })
+    )
+  );
+  triggerChangeSync();
+  return true;
+}
+
 async function loadTodos() {
   if (restoreInProgressPromise) await restoreInProgressPromise;
   await migrateMissingTodoDates();
+  await dedupeTodosForDate(selectedDate);
   await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
+  todos = await ensurePendingTodoOrders(todos);
   renderTodos();
 }
 
@@ -1000,6 +874,8 @@ async function carryOverIncomplete(fromDate, toDate) {
       date: toDate,
       text: todo.text,
       completed: false,
+      queued: false,
+      queueOrder: null,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1019,11 +895,20 @@ async function moveTodoToTomorrow(todo) {
   const sourceDate = todo.date || selectedDate;
   const tomorrowDate = formatDateLocal(shiftDate(parseDateLocal(sourceDate), 1));
   const now = new Date().toISOString();
+  const hasDuplicateTomorrow = await hasTodoWithSameText(tomorrowDate, todo.text, todo.id);
+
+  if (hasDuplicateTomorrow) {
+    setStatus('明天已存在同名未完成任务，未重复移动');
+    return false;
+  }
 
   await updateTodo({
     ...todo,
     date: tomorrowDate,
     completed: false,
+    queued: false,
+    queueOrder: null,
+    sortOrder: null,
     recurrenceRuleId: null,
     updatedAt: now
   });
@@ -1039,18 +924,26 @@ async function moveTodoToTomorrow(todo) {
 
 function renderTodos() {
   list.innerHTML = '';
+  if (todoQueueList) todoQueueList.innerHTML = '';
   if (completedList) completedList.innerHTML = '';
   runningTimeEls.clear();
-  const visibleTodos = todos
-    .filter(todo => !todo.deletedAt);
-  const pendingTodos = visibleTodos
+  const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
+  const activeTodos = todos.filter(todo => !todo.deletedAt);
+  const pendingTodos = activeTodos
     .filter(todo => !todo.completed)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
-      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
-      return bTime - aTime;
-    });
-  const doneTodos = visibleTodos
+    .sort(comparePendingTodos);
+  const matchesSelectedCategory = todo => {
+    if (selectedCategoryFilter === 'All') return true;
+    return parseCategorizedText(todo.text).category === selectedCategoryFilter;
+  };
+  const queuedTodos = pendingTodos
+    .filter(todo => isTodoQueued(todo))
+    .sort(compareQueuedTodos);
+  const listTodos = pendingTodos
+    .filter(todo => !isTodoQueued(todo))
+    .filter(matchesSelectedCategory)
+    .sort(comparePendingTodos);
+  const doneTodos = activeTodos
     .filter(todo => todo.completed)
     .sort((a, b) => {
       const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
@@ -1058,11 +951,59 @@ function renderTodos() {
       return bTime - aTime;
     });
 
-  const renderTodoItem = (todo, targetList) => {
+  if (todoQueuePanel) {
+    todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
+  }
+
+  updateTodoFilterNavButtons(pendingTodos);
+
+  const renderTodoItem = (todo, targetList, group = 'list') => {
     const li = document.createElement('li');
     li.className = todo.completed ? 'completed' : '';
     if (isTodoInProgress(todo)) li.classList.add('in-progress');
     li.dataset.id = String(todo.id);
+    li.dataset.group = group;
+    li.draggable = targetList === list || targetList === todoQueueList;
+
+    if (targetList === list || targetList === todoQueueList) {
+      li.ondragstart = event => {
+        if (li.classList.contains('editing')) {
+          event.preventDefault();
+          return;
+        }
+        draggedTodoId = todo.id;
+        draggedTodoGroup = group;
+        li.classList.add('todo-dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', String(todo.id));
+        }
+      };
+      li.ondragend = () => {
+        draggedTodoId = null;
+        draggedTodoGroup = null;
+        li.classList.remove('todo-dragging');
+        clearTodoDropIndicatorClasses();
+      };
+      li.ondragover = event => {
+        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
+        event.preventDefault();
+        const insertAfter = shouldInsertAfter(event, li);
+        li.classList.toggle('todo-drop-before', !insertAfter);
+        li.classList.toggle('todo-drop-after', insertAfter);
+      };
+      li.ondragleave = () => {
+        li.classList.remove('todo-drop-before', 'todo-drop-after');
+      };
+      li.ondrop = async event => {
+        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
+        event.preventDefault();
+        const insertAfter = shouldInsertAfter(event, li);
+        suppressTodoClickUntil = Date.now() + 300;
+        clearTodoDropIndicatorClasses();
+        await reorderPendingTodos(draggedTodoId, todo.id, insertAfter, group);
+      };
+    }
 
     const content = document.createElement('div');
     content.className = 'todo-content';
@@ -1133,14 +1074,43 @@ function renderTodos() {
       if (changed) loadTodos();
     };
 
+    const queueBtn = document.createElement('button');
+    queueBtn.className = 'queue-btn';
+    queueBtn.type = 'button';
+    queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
+    queueBtn.onclick = async event => {
+      event.stopPropagation();
+      const now = new Date().toISOString();
+      if (isTodoQueued(todo)) {
+        await updateTodo({
+          ...todo,
+          queued: false,
+          queueOrder: null,
+          sortOrder: getNextPendingSortOrder(),
+          updatedAt: now
+        });
+      } else {
+        await updateTodo({
+          ...todo,
+          queued: true,
+          queueOrder: getNextQueuedSortOrder(),
+          updatedAt: now
+        });
+      }
+      triggerChangeSync();
+      loadTodos();
+    };
+
     const actions = document.createElement('div');
     actions.className = 'todo-actions';
+    if (!todo.completed) actions.appendChild(queueBtn);
     actions.appendChild(moveBtn);
     actions.appendChild(progressBtn);
     actions.appendChild(del);
     li.appendChild(content);
     li.appendChild(actions);
     li.onclick = async event => {
+      if (Date.now() < suppressTodoClickUntil) return;
       if (event.detail > 1) return;
       if (li.classList.contains('editing')) return;
       const nextCompleted = !todo.completed;
@@ -1148,6 +1118,8 @@ function renderTodos() {
       await updateTodo({
         ...todo,
         completed: nextCompleted,
+        queued: nextCompleted ? false : todo.queued,
+        queueOrder: nextCompleted ? null : todo.queueOrder ?? null,
         updatedAt: new Date().toISOString()
       });
       if (nextCompleted) await clearTodoInProgress(todo.uuid);
@@ -1166,7 +1138,8 @@ function renderTodos() {
     targetList.appendChild(li);
   };
 
-  pendingTodos.forEach(todo => renderTodoItem(todo, list));
+  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue'));
+  listTodos.forEach(todo => renderTodoItem(todo, list, 'list'));
   if (completedList) {
     doneTodos.forEach(todo => renderTodoItem(todo, completedList));
   }
@@ -1175,8 +1148,176 @@ function renderTodos() {
   }
 }
 
+function getPendingTodoCountsByCategory(todoList = todos) {
+  const counts = new Map(TODO_FILTER_SEQUENCE.map(category => [category, 0]));
+  const pendingTodos = todoList.filter(todo => todo && !todo.deletedAt && !todo.completed);
+
+  counts.set('All', pendingTodos.length);
+  pendingTodos.forEach(todo => {
+    const category = parseCategorizedText(todo.text).category;
+    counts.set(category, (counts.get(category) || 0) + 1);
+  });
+
+  return counts;
+}
+
+function getNextTodoFilterCategory(direction, todoList = todos) {
+  if (!todoFilterCategory) return null;
+  const counts = getPendingTodoCountsByCategory(todoList);
+  const currentIndex = TODO_FILTER_SEQUENCE.indexOf(todoFilterCategory.value);
+  if (currentIndex < 0) return null;
+
+  for (let index = currentIndex + direction; index >= 0 && index < TODO_FILTER_SEQUENCE.length; index += direction) {
+    const category = TODO_FILTER_SEQUENCE[index];
+    if ((counts.get(category) || 0) > 0) return category;
+  }
+
+  return null;
+}
+
+function updateTodoFilterNavButtons(pendingTodos = null) {
+  const sourceTodos = Array.isArray(pendingTodos) ? pendingTodos : todos.filter(todo => todo && !todo.deletedAt && !todo.completed);
+  const previousCategory = getNextTodoFilterCategory(-1, sourceTodos);
+  const nextCategory = getNextTodoFilterCategory(1, sourceTodos);
+
+  if (todoFilterPrevBtn) todoFilterPrevBtn.disabled = !previousCategory;
+  if (todoFilterNextBtn) todoFilterNextBtn.disabled = !nextCategory;
+}
+
+function switchTodoFilter(direction) {
+  if (!todoFilterCategory) return;
+  const nextCategory = getNextTodoFilterCategory(direction);
+  if (!nextCategory) return;
+  todoFilterCategory.value = nextCategory;
+  renderTodos();
+}
+
 function isTodoInProgress(todo) {
   return Boolean(todo && todo.uuid && inProgressTodos.has(todo.uuid));
+}
+
+function isTodoQueued(todo) {
+  return Boolean(todo && !todo.deletedAt && !todo.completed && todo.queued);
+}
+
+function getTodoSortTime(todo) {
+  return Date.parse(todo.updatedAt || todo.createdAt || 0);
+}
+
+function comparePendingTodos(a, b) {
+  const aOrder = Number.isFinite(a.sortOrder) ? a.sortOrder : null;
+  const bOrder = Number.isFinite(b.sortOrder) ? b.sortOrder : null;
+  if (aOrder != null && bOrder != null && aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+  if (aOrder != null) return -1;
+  if (bOrder != null) return 1;
+  return getTodoSortTime(b) - getTodoSortTime(a);
+}
+
+function compareQueuedTodos(a, b) {
+  const aOrder = Number.isFinite(a.queueOrder) ? a.queueOrder : null;
+  const bOrder = Number.isFinite(b.queueOrder) ? b.queueOrder : null;
+  if (aOrder != null && bOrder != null && aOrder !== bOrder) {
+    return aOrder - bOrder;
+  }
+  if (aOrder != null) return -1;
+  if (bOrder != null) return 1;
+  return getTodoSortTime(b) - getTodoSortTime(a);
+}
+
+async function ensurePendingGroupOrders(items, group) {
+  const isQueueGroup = group === 'queue';
+  const orderKey = isQueueGroup ? 'queueOrder' : 'sortOrder';
+  const compare = isQueueGroup ? compareQueuedTodos : comparePendingTodos;
+  const pendingTodos = items.filter(todo =>
+    todo &&
+    !todo.deletedAt &&
+    !todo.completed &&
+    (isQueueGroup ? isTodoQueued(todo) : !isTodoQueued(todo))
+  );
+  if (!pendingTodos.some(todo => !Number.isFinite(todo[orderKey]))) {
+    return new Map();
+  }
+
+  const orderedTodos = [...pendingTodos].sort(compare);
+  const updatedById = new Map();
+  await Promise.all(
+    orderedTodos.map(async (todo, index) => {
+      if (todo[orderKey] === index) {
+        updatedById.set(todo.id, todo);
+        return;
+      }
+      const nextTodo = {
+        ...todo,
+        [orderKey]: index
+      };
+      await updateTodo(nextTodo);
+      updatedById.set(todo.id, nextTodo);
+    })
+  );
+  return updatedById;
+}
+
+async function ensurePendingTodoOrders(items) {
+  const [listUpdates, queueUpdates] = await Promise.all([
+    ensurePendingGroupOrders(items, 'list'),
+    ensurePendingGroupOrders(items, 'queue')
+  ]);
+  return items.map(todo => listUpdates.get(todo.id) || queueUpdates.get(todo.id) || todo);
+}
+
+function shouldInsertAfter(event, element) {
+  const rect = element.getBoundingClientRect();
+  return event.clientY >= rect.top + rect.height / 2;
+}
+
+function clearTodoDropIndicatorClasses() {
+  document
+    .querySelectorAll('.todo-drop-before, .todo-drop-after, .todo-dragging')
+    .forEach(item => item.classList.remove('todo-drop-before', 'todo-drop-after', 'todo-dragging'));
+}
+
+async function reorderPendingTodos(draggedId, targetId, insertAfter, group = 'list') {
+  const isQueueGroup = group === 'queue';
+  const compare = isQueueGroup ? compareQueuedTodos : comparePendingTodos;
+  const orderKey = isQueueGroup ? 'queueOrder' : 'sortOrder';
+  const orderedPendingTodos = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      (isQueueGroup ? isTodoQueued(todo) : !isTodoQueued(todo))
+    )
+    .sort(compare);
+  const draggedIndex = orderedPendingTodos.findIndex(todo => todo.id === draggedId);
+  const targetIndex = orderedPendingTodos.findIndex(todo => todo.id === targetId);
+  if (draggedIndex < 0 || targetIndex < 0) return;
+
+  const reorderedTodos = [...orderedPendingTodos];
+  const [draggedTodo] = reorderedTodos.splice(draggedIndex, 1);
+  const adjustedTargetIndex = reorderedTodos.findIndex(todo => todo.id === targetId);
+  const insertIndex = insertAfter ? adjustedTargetIndex + 1 : adjustedTargetIndex;
+  reorderedTodos.splice(insertIndex, 0, draggedTodo);
+
+  const updatedById = new Map();
+  await Promise.all(
+    reorderedTodos.map(async (todo, index) => {
+      if (todo[orderKey] === index) {
+        updatedById.set(todo.id, todo);
+        return;
+      }
+      const nextTodo = {
+        ...todo,
+        [orderKey]: index
+      };
+      await updateTodo(nextTodo);
+      updatedById.set(todo.id, nextTodo);
+    })
+  );
+
+  todos = todos.map(todo => updatedById.get(todo.id) || todo);
+  renderTodos();
 }
 
 function formatElapsed(ms) {
@@ -1309,7 +1450,7 @@ async function toggleTodoInProgress(todo) {
     return true;
   }
   if (inProgressTodos.size >= MAX_IN_PROGRESS_TODOS) {
-    setStatus('最多同时进行 2 个任务');
+    setStatus('最多同时进行 3 个任务');
     return false;
   }
   inProgressTodos.set(todo.uuid, Date.now());
@@ -1366,6 +1507,48 @@ function setStatus(message) {
   }
 }
 
+function getNextPendingSortOrder() {
+  const pendingOrders = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      !isTodoQueued(todo) &&
+      Number.isFinite(todo.sortOrder)
+    )
+    .map(todo => todo.sortOrder);
+  if (!pendingOrders.length) return 0;
+  return Math.min(...pendingOrders) - 1;
+}
+
+function getLastPendingSortOrder() {
+  const pendingOrders = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      !isTodoQueued(todo) &&
+      Number.isFinite(todo.sortOrder)
+    )
+    .map(todo => todo.sortOrder);
+  if (!pendingOrders.length) return -1;
+  return Math.max(...pendingOrders);
+}
+
+function getNextQueuedSortOrder() {
+  const queuedOrders = todos
+    .filter(todo =>
+      todo &&
+      !todo.deletedAt &&
+      !todo.completed &&
+      isTodoQueued(todo) &&
+      Number.isFinite(todo.queueOrder)
+    )
+    .map(todo => todo.queueOrder);
+  if (!queuedOrders.length) return 0;
+  return Math.max(...queuedOrders) + 1;
+}
+
 function formatTodoText(category, text) {
   const safeCategory = typeof category === 'string' && category.trim()
     ? category.trim()
@@ -1407,10 +1590,18 @@ addBtn.onclick = async () => {
   const initResult = syncInitPromise ? await syncInitPromise : null;
   const userId = currentUserId ||
     (initResult && initResult.userId ? initResult.userId : ensureUserId());
+  const nextText = formatTodoText(todoCategory ? todoCategory.value : 'Work', text);
+  if (await hasTodoWithSameText(selectedDate, nextText)) {
+    setStatus('同一天已存在同名任务');
+    return;
+  }
   await addTodo({
     date: selectedDate,
-    text: formatTodoText(todoCategory ? todoCategory.value : 'Work', text),
+    text: nextText,
     completed: false,
+    queued: false,
+    queueOrder: null,
+    sortOrder: getNextPendingSortOrder(),
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -1435,6 +1626,24 @@ if (dueInput) {
   });
 }
 
+if (todoFilterCategory) {
+  todoFilterCategory.addEventListener('change', () => {
+    renderTodos();
+  });
+}
+
+if (todoFilterPrevBtn) {
+  todoFilterPrevBtn.addEventListener('click', () => {
+    switchTodoFilter(-1);
+  });
+}
+
+if (todoFilterNextBtn) {
+  todoFilterNextBtn.addEventListener('click', () => {
+    switchTodoFilter(1);
+  });
+}
+
 // -------- Summary logic --------
 async function loadSummaries() {
   summaries = await getSummariesByDate(selectedDate);
@@ -1448,7 +1657,6 @@ async function loadSummaries() {
   summaryInput.value = latest ? latest.text : '';
   summaryRatingValue = latest && typeof latest.rating === 'number' ? latest.rating : 0;
   renderSummaryRating();
-  renderDailyFatigueQuestion();
   autoResizeSummary();
   renderTimerTimeline();
   await renderContributionChart();
@@ -1714,9 +1922,8 @@ function renderTimerTimeline() {
 async function renderContributionChart() {
   if (!contributionChart && !taskStatusChart) return;
   const allSummaries = await getAllSummaries();
-  const allTodos = await getAllTodos();
   const latestByDate = new Map();
-  const todoStatusByDate = new Map();
+  const summaryTextStatusByDate = new Map();
 
   allSummaries
     .filter(summary => !summary.deletedAt)
@@ -1730,63 +1937,58 @@ async function renderContributionChart() {
       const rawRating = typeof summary.rating === 'number' ? summary.rating : 0;
       const level = Math.max(0, Math.min(10, Math.round(rawRating * 2)));
       latestByDate.set(summary.date, level);
-    });
-
-  allTodos
-    .filter(todo => !todo.deletedAt && todo.date)
-    .forEach(todo => {
-      const current = todoStatusByDate.get(todo.date) || { total: 0, completed: 0 };
-      current.total += 1;
-      if (todo.completed) current.completed += 1;
-      todoStatusByDate.set(todo.date, current);
+      const summaryText = typeof summary.text === 'string' ? summary.text.trim() : '';
+      summaryTextStatusByDate.set(summary.date, summaryText ? 'complete' : 'incomplete');
     });
 
   contributionScores = latestByDate;
-  taskCompletionStatusByDate = new Map(
-    [...todoStatusByDate.entries()].map(([date, status]) => [
-      date,
-      status.total > 0 && status.completed === status.total ? 'complete' : 'incomplete'
-    ])
-  );
+  taskSummaryStatusByDate = summaryTextStatusByDate;
 
-  const periods = buildContributionHalfPeriods(new Date());
-  const currentPeriod = getContributionHalfPeriod(new Date());
+  const focusPeriods = buildContributionHalfPeriods(new Date());
+  const focusCurrentPeriod = getContributionHalfPeriod(new Date());
+  const taskPeriods = buildContributionMonthPeriods(new Date());
+  const taskCurrentPeriod = getContributionMonthPeriod(new Date());
   const todayDateStr = formatDateLocal(new Date());
-  if (!periods.length) return;
-  const activePeriod = getActiveContributionPeriod(periods, currentPeriod);
-  if (!activePeriod) return;
+  if (!focusPeriods.length || !taskPeriods.length) return;
+  const activeFocusPeriod = getActiveContributionPeriod(focusPeriods, focusCurrentPeriod);
+  const activeTaskPeriod = getActiveTaskStatusMonth(taskPeriods, taskCurrentPeriod);
+  if (!activeFocusPeriod || !activeTaskPeriod) return;
 
-  const { startDate: firstDate, endDate } = getContributionHalfRange(activePeriod);
-  const gridStart = startOfWeekMonday(firstDate);
-  const diffDays = Math.round((endDate - gridStart) / 86400000);
-  const totalDays = diffDays + 1;
-  const weekCount = Math.ceil(totalDays / 7);
-
-  const buildChart = ({ chartEl, getCellData, includePeriodNav = false }) => {
+  const buildChart = ({ chartEl, getCellData, includePeriodNav = false, periods, currentPeriod, activePeriod, getRange, formatPeriodLabel, onPeriodChange, transpose = false }) => {
     if (!chartEl) return { countA: 0, countB: 0, countC: 0 };
+    const { startDate: firstDate, endDate } = getRange(activePeriod);
+    const gridStart = startOfWeekMonday(firstDate);
+    const diffDays = Math.round((endDate - gridStart) / 86400000);
+    const totalDays = diffDays + 1;
+    const weekCount = Math.ceil(totalDays / 7);
 
     const layout = document.createElement('div');
     layout.className = 'contribution-layout';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'contribution-grid';
+    if (transpose) wrapper.classList.add('is-transposed');
     wrapper.style.setProperty('--weeks', String(weekCount));
+    wrapper.style.setProperty('--contrib-columns', String(transpose ? 7 : weekCount));
 
-    const months = document.createElement('div');
-    months.className = 'contribution-months';
-    let lastLabeledMonth = null;
-    for (let week = 0; week < weekCount; week += 1) {
-      const monthLabel = document.createElement('span');
-      monthLabel.className = 'contribution-month';
-      const weekStart = shiftDate(gridStart, week * 7);
-      const columnDate = weekStart < firstDate ? firstDate : weekStart;
-      const monthKey = `${columnDate.getFullYear()}-${columnDate.getMonth()}`;
-      if (columnDate <= endDate && monthKey !== lastLabeledMonth) {
-        monthLabel.textContent = formatMonthShort(columnDate);
-        lastLabeledMonth = monthKey;
+    let months = null;
+    if (!transpose) {
+      months = document.createElement('div');
+      months.className = 'contribution-months';
+      let lastLabeledMonth = null;
+      for (let week = 0; week < weekCount; week += 1) {
+        const monthLabel = document.createElement('span');
+        monthLabel.className = 'contribution-month';
+        const weekStart = shiftDate(gridStart, week * 7);
+        const columnDate = weekStart < firstDate ? firstDate : weekStart;
+        const monthKey = `${columnDate.getFullYear()}-${columnDate.getMonth()}`;
+        if (columnDate <= endDate && monthKey !== lastLabeledMonth) {
+          monthLabel.textContent = formatMonthShort(columnDate);
+          lastLabeledMonth = monthKey;
+        }
+        monthLabel.style.gridColumn = String(week + 1);
+        months.appendChild(monthLabel);
       }
-      monthLabel.style.gridColumn = String(week + 1);
-      months.appendChild(monthLabel);
     }
 
     const weekdays = document.createElement('div');
@@ -1867,7 +2069,7 @@ async function renderContributionChart() {
       }
     }
 
-    wrapper.appendChild(months);
+    if (months) wrapper.appendChild(months);
     wrapper.appendChild(weekdays);
     wrapper.appendChild(cells);
     layout.appendChild(wrapper);
@@ -1883,13 +2085,10 @@ async function renderContributionChart() {
           button.type = 'button';
           button.className = 'contribution-period';
           if (period.key === activePeriod.key) button.classList.add('is-active');
-          button.textContent = formatContributionHalfLabel(period);
+          button.textContent = formatPeriodLabel(period);
           button.setAttribute('aria-pressed', period.key === activePeriod.key ? 'true' : 'false');
           button.addEventListener('click', () => {
-            if (contributionHalfKey === period.key) return;
-            contributionHalfKey = period.key;
-            contributionFollowCurrentHalf = period.key === currentPeriod.key;
-            void renderContributionChart();
+            onPeriodChange(period, currentPeriod);
           });
           periodNav.appendChild(button);
         });
@@ -1904,6 +2103,17 @@ async function renderContributionChart() {
   const focusStats = buildChart({
     chartEl: contributionChart,
     includePeriodNav: true,
+    periods: focusPeriods,
+    currentPeriod: focusCurrentPeriod,
+    activePeriod: activeFocusPeriod,
+    getRange: getContributionHalfRange,
+    formatPeriodLabel: formatContributionHalfLabel,
+    onPeriodChange: (period, currentPeriod) => {
+      if (contributionHalfKey === period.key) return;
+      contributionHalfKey = period.key;
+      contributionFollowCurrentHalf = period.key === currentPeriod.key;
+      void renderContributionChart();
+    },
     getCellData: dateStr => {
       const level = contributionScores.get(dateStr) ?? 0;
       return {
@@ -1918,32 +2128,42 @@ async function renderContributionChart() {
   const taskStats = buildChart({
     chartEl: taskStatusChart,
     includePeriodNav: true,
+    periods: taskPeriods,
+    currentPeriod: taskCurrentPeriod,
+    activePeriod: activeTaskPeriod,
+    getRange: getContributionMonthRange,
+    formatPeriodLabel: formatContributionMonthLabel,
+    onPeriodChange: (period, currentPeriod) => {
+      if (taskStatusMonthKey === period.key) return;
+      taskStatusMonthKey = period.key;
+      taskStatusFollowCurrentMonth = period.key === currentPeriod.key;
+      void renderContributionChart();
+    },
+    transpose: true,
     getCellData: dateStr => {
       const status = dateStr >= todayDateStr
         ? 'pending'
-        : (taskCompletionStatusByDate.get(dateStr) || 'empty');
+        : (taskSummaryStatusByDate.get(dateStr) || 'incomplete');
       const tooltipText = status === 'complete'
-        ? '\u4efb\u52a1\u5df2\u5168\u90e8\u5b8c\u6210'
+        ? '\u5df2\u5199\u4eca\u65e5\u603b\u7ed3'
         : status === 'incomplete'
-          ? '\u5b58\u5728\u672a\u5b8c\u6210\u4efb\u52a1'
-          : status === 'empty'
-            ? '\u5f53\u5929\u6ca1\u6709\u4efb\u52a1'
-            : '\u5f53\u5929\u5c1a\u672a\u7ed3\u675f';
+          ? '\u672a\u5199\u4eca\u65e5\u603b\u7ed3'
+          : '\u5f53\u5929\u5c1a\u672a\u7ed3\u675f';
       return {
         status,
         tooltip: `${formatTooltipDate(dateStr)}?${tooltipText}`,
         countA: status === 'complete' ? 1 : 0,
         countB: status === 'incomplete' ? 1 : 0,
-        countC: status === 'empty' ? 1 : 0
+        countC: status === 'pending' ? 1 : 0
       };
     }
   });
 
   if (contributionTitle) {
-    contributionTitle.textContent = formatContributionHalfTitle(activePeriod);
+    contributionTitle.textContent = formatContributionHalfTitle(activeFocusPeriod);
   }
   if (contributionChart) {
-    contributionChart.setAttribute('aria-label', formatContributionHalfTitle(activePeriod));
+    contributionChart.setAttribute('aria-label', formatContributionHalfTitle(activeFocusPeriod));
   }
   if (contributionSummary) {
     const recentDays = 15;
@@ -1955,13 +2175,13 @@ async function renderContributionChart() {
     contributionSummary.textContent = `最近${recentDays}天平均 ${(recentTotal / recentDays).toFixed(1)} 次`;
   }
   if (taskStatusTitle) {
-    taskStatusTitle.textContent = `${formatContributionHalfLabel(activePeriod)}\u4efb\u52a1\u5b8c\u6210\u56fe`;
+    taskStatusTitle.textContent = formatContributionMonthTitle(activeTaskPeriod);
   }
   if (taskStatusChart) {
-    taskStatusChart.setAttribute('aria-label', `${formatContributionHalfLabel(activePeriod)}\u4efb\u52a1\u5b8c\u6210\u60c5\u51b5\u56fe`);
+    taskStatusChart.setAttribute('aria-label', `${formatContributionMonthTitle(activeTaskPeriod)}\u53ef\u89c6\u5316\u56fe`);
   }
   if (taskStatusSummary) {
-    taskStatusSummary.textContent = `\u5168\u5b8c\u6210 ${taskStats.countA} \u5929\uff0c\u672a\u5b8c\u6210 ${taskStats.countB} \u5929\uff0c\u65e0\u4efb\u52a1 ${taskStats.countC} \u5929`;
+    taskStatusSummary.textContent = `已写 ${taskStats.countA} 天，未写 ${taskStats.countB} 天，未来 ${taskStats.countC} 天`;
   }
 }
 
@@ -1976,6 +2196,7 @@ window.addEventListener('resize', () => {
 
 // -------- Recurrence rules --------
 async function loadRecurrenceRules() {
+  await dedupeLocalRecurrenceRules();
   recurrenceRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
   renderRecurrenceRules();
 }
@@ -2579,6 +2800,72 @@ function renderBgmStatus(state) {
   bgmStatusEl.textContent = `BGM：${labels[state] || '未播放'}`;
 }
 
+function renderBgmDebug(snapshot) {
+  if (!bgmDebugEl || !snapshot) return;
+  const audioInfo = snapshot.audio || {};
+  const htmlAudioInfo = snapshot.htmlAudio || {};
+  const lines = [
+    `state=${snapshot.playbackState} shouldPlay=${snapshot.shouldBePlaying} interacted=${snapshot.userInteracted}`,
+    `mode=${snapshot.mode || '-'} sourceType=${snapshot.source?.type || '-'} source=${snapshot.source?.value || '-'}`,
+    `contextState=${audioInfo.contextState || '-'} sampleRate=${audioInfo.sampleRate || '-'} volume=${snapshot.volume}`,
+    `hasSourceNode=${audioInfo.hasSourceNode} hasGainNode=${audioInfo.hasGainNode}`,
+    `htmlPaused=${htmlAudioInfo.paused} htmlEnded=${htmlAudioInfo.ended} htmlReady=${htmlAudioInfo.readyState} htmlNetwork=${htmlAudioInfo.networkState}`,
+    '',
+    ...snapshot.logs
+  ];
+  bgmDebugEl.textContent = lines.join('\n');
+}
+
+let bgmDebugCopyTimer = null;
+
+function setBgmDebugCopyLabel(text) {
+  if (!bgmDebugCopyBtn) return;
+  bgmDebugCopyBtn.textContent = text;
+  if (bgmDebugCopyTimer) {
+    clearTimeout(bgmDebugCopyTimer);
+    bgmDebugCopyTimer = null;
+  }
+  if (text === '复制日志') return;
+  bgmDebugCopyTimer = window.setTimeout(() => {
+    if (!bgmDebugCopyBtn) return;
+    bgmDebugCopyBtn.textContent = '复制日志';
+    bgmDebugCopyTimer = null;
+  }, 1600);
+}
+
+async function copyBgmDebugText() {
+  if (!bgmDebugEl) return;
+  const text = bgmDebugEl.textContent || '';
+  if (!text.trim()) {
+    setBgmDebugCopyLabel('无内容');
+    return;
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      setBgmDebugCopyLabel('已复制');
+      return;
+    } catch (err) {
+      // 回退到选区复制
+    }
+  }
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(bgmDebugEl);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (err) {
+    copied = false;
+  }
+  selection.removeAllRanges();
+  setBgmDebugCopyLabel(copied ? '已复制' : '复制失败');
+}
+
 function triggerChangeSync() {
   pendingChangeSync = true;
   void flushChangeSync();
@@ -2630,15 +2917,6 @@ async function restoreTheme() {
 
 restoreTheme();
 
-async function restoreRegretCoinLedgerLocal() {
-  const record = await getMeta(REGRET_COIN_LEDGER_META_KEY);
-  regretCoinLedger = normalizeRegretCoinLedger(record ? record.value : []);
-  renderRegretCoinSection();
-}
-
-void restoreRegretCoinLedgerLocal();
-void restoreDailyFatigueAnswersLocal();
-
 function autoResizeSummary() {
   if (!summaryInput) return;
   summaryInput.style.height = 'auto';
@@ -2653,6 +2931,60 @@ function getLatestSummaryRecord(summaryList = summaries) {
       const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
       return bTime - aTime;
     })[0];
+}
+
+async function addAutoSummaryRatingForTimer(dateStr, durationMs) {
+  if (!dateStr || durationMs <= 60 * 60 * 1000) return;
+  const summaryList = dateStr === selectedDate ? summaries : await getSummariesByDate(dateStr);
+  const existing = getLatestSummaryRecord(summaryList);
+  const now = new Date().toISOString();
+
+  if (existing) {
+    const currentRating = typeof existing.rating === 'number' ? existing.rating : 0;
+    const nextRating = Math.min(5, currentRating + 0.5);
+    if (nextRating === currentRating) return;
+    const nextSummary = {
+      ...existing,
+      rating: nextRating,
+      updatedAt: now,
+      deletedAt: null
+    };
+    await updateSummary(nextSummary);
+    if (dateStr === selectedDate) {
+      summaries = summaries.map(summary =>
+        summary.id === nextSummary.id ? nextSummary : summary
+      );
+      summaryRatingValue = nextRating;
+      renderSummaryRating();
+      setSummaryStatus('已自动加 0.5 星');
+    }
+    triggerChangeSync();
+    await renderContributionChart();
+    return;
+  }
+
+  const initResult = syncInitPromise ? await syncInitPromise : null;
+  const userId = currentUserId ||
+    (initResult && initResult.userId ? initResult.userId : ensureUserId());
+  const nextSummary = {
+    date: dateStr,
+    text: '',
+    rating: 0.5,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    uuid: generateUUID(),
+    userId
+  };
+  const id = await addSummary(nextSummary);
+  if (dateStr === selectedDate) {
+    summaries = [...summaries, { ...nextSummary, id }];
+    summaryRatingValue = nextSummary.rating;
+    renderSummaryRating();
+    setSummaryStatus('已自动加 0.5 星');
+  }
+  triggerChangeSync();
+  await renderContributionChart();
 }
 
 function scheduleSummarySave() {
@@ -2732,25 +3064,11 @@ summaryInput.addEventListener('blur', () => {
   void saveSummaryNow();
 });
 
-if (fatigueYesBtn) {
-  fatigueYesBtn.addEventListener('click', () => {
-    void setDailyFatigueAnswer('yes');
-  });
-}
-
-if (fatigueNoBtn) {
-  fatigueNoBtn.addEventListener('click', () => {
-    void setDailyFatigueAnswer('no');
-  });
-}
-
-window.setInterval(() => {
-  renderDailyFatigueQuestion();
-}, 60 * 1000);
-
 // -------- Date module --------
 async function loadForDate() {
   await Promise.all([loadTodos(), loadSummaries()]);
+  restoreWorkPunchRecords();
+  renderWorkPunchTable(selectedDate);
 }
 
 if (datePrevBtn) {
@@ -2780,6 +3098,16 @@ if (datePicker) {
     if (datePicker.value) setSelectedDate(datePicker.value);
   });
 }
+
+if (workPunchBtns.length) {
+  workPunchBtns.forEach(button => {
+    button.addEventListener('click', () => {
+      recordWorkPunch(button.dataset.slot);
+    });
+  });
+}
+
+restoreWorkPunchRecords();
 
 setSelectedDate(selectedDate);
 
@@ -2814,6 +3142,13 @@ let audioContext = null;
 let lastPersistAt = 0;
 let ownsTimerLease = false;
 let timerLeaseInterval = null;
+let assistTimerDurationMs = 0;
+let assistTimerRemainingMs = 0;
+let assistTimerRunning = false;
+let assistTimerStarted = false;
+let assistTimerStartAt = 0;
+let assistTimerInterval = null;
+let assistTimerPresets = [2, 5, 10, 15, 20];
 
 function getTimerTimelineSequence(dateStr) {
   const history = Array.isArray(timerTimelineByDate[dateStr]) ? timerTimelineByDate[dateStr] : [];
@@ -2971,6 +3306,10 @@ function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
     slices,
     state
   };
+  const durationMs = slices.reduce(
+    (sum, slice) => sum + Math.max(0, slice.endAt - slice.startAt),
+    0
+  );
   const history = Array.isArray(timerTimelineByDate[segment.date]) ? timerTimelineByDate[segment.date] : [];
   timerTimelineByDate = {
     ...timerTimelineByDate,
@@ -2978,6 +3317,9 @@ function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
   };
   activeTimerSegment = null;
   void Promise.all([persistTimerTimelineHistory(), persistActiveTimerSegment()]);
+  if (state === 'completed' || state === 'stopped') {
+    void addAutoSummaryRatingForTimer(segment.date, durationMs);
+  }
   triggerChangeSync();
   renderTimerTimeline();
 }
@@ -3315,10 +3657,286 @@ function playRestEndAlarm() {
   }
 }
 
+function playAssistEndAlarm() {
+  try {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const gainValue = Math.max(0.04, Math.min(0.28, alarmVolumeRatio * 1.4));
+    const startAt = audioContext.currentTime + 0.02;
+    const notes = [
+      { freq: 880, offset: 0, durationMs: 180 },
+      { freq: 1174.66, offset: 0.24, durationMs: 180 },
+      { freq: 1567.98, offset: 0.48, durationMs: 260 }
+    ];
+    notes.forEach(note => {
+      playToneWithFade(note.freq, startAt + note.offset, note.durationMs, gainValue);
+    });
+  } catch (err) {
+    // 静默降级
+  }
+}
+
 function setAlarmVolumePercent(value) {
   const parsed = Number(value);
   const safe = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 15;
   alarmVolumeRatio = safe / 100;
+}
+
+function formatAssistTimerText(remainingMs) {
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatAssistPresetLabel(minutes) {
+  const totalMinutes = Math.max(1, Math.floor(Number(minutes) || 0));
+  return `${String(totalMinutes).padStart(2, '0')}:00`;
+}
+
+function normalizeAssistTimerPresets(value) {
+  const list = Array.isArray(value) ? value : [];
+  const normalized = [];
+  list.forEach(item => {
+    const minutes = Math.floor(Number(item));
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    if (normalized.includes(minutes)) return;
+    normalized.push(minutes);
+  });
+  const merged = [...normalized, ...[2, 5, 10, 15, 20].filter(item => !normalized.includes(item))];
+  return merged.slice(0, 5);
+}
+
+function persistAssistTimerPresets() {
+  writeLocalJson(ASSIST_TIMER_PRESETS_LOCAL_KEY, assistTimerPresets);
+}
+
+function renderAssistTimerPresets() {
+  if (!assistQuickBtns.length) return;
+  const presetButtons = assistQuickBtns.filter(button => button.dataset.custom !== 'true');
+  presetButtons.forEach((button, index) => {
+    const minutes = assistTimerPresets[index];
+    if (!Number.isFinite(minutes)) return;
+    button.dataset.minutes = String(minutes);
+    button.textContent = formatAssistPresetLabel(minutes);
+  });
+}
+
+function rememberAssistCustomPreset(minutes) {
+  const nextMinutes = Math.floor(Number(minutes));
+  if (!Number.isFinite(nextMinutes) || nextMinutes <= 0) return;
+  assistTimerPresets = [nextMinutes, ...assistTimerPresets.filter(item => item !== nextMinutes)].slice(0, 5);
+  persistAssistTimerPresets();
+  renderAssistTimerPresets();
+}
+
+function restoreAssistTimerPresets() {
+  assistTimerPresets = normalizeAssistTimerPresets(readLocalJson(ASSIST_TIMER_PRESETS_LOCAL_KEY));
+  renderAssistTimerPresets();
+}
+
+function restoreWorkPunchRecords() {
+  const value = readLocalJson(WORK_PUNCH_LOCAL_KEY);
+  workPunchRecords = value && typeof value === 'object' ? value : {};
+}
+
+function persistWorkPunchRecords() {
+  writeLocalJson(WORK_PUNCH_LOCAL_KEY, workPunchRecords);
+}
+
+function getWorkPunchRecord(dateStr = selectedDate) {
+  const record = workPunchRecords && typeof workPunchRecords === 'object'
+    ? workPunchRecords[dateStr]
+    : null;
+  return record && typeof record === 'object' ? record : {};
+}
+
+function renderWorkPunchTable(dateStr = selectedDate) {
+  const record = getWorkPunchRecord(dateStr);
+  [
+    'work1Start',
+    'work1End',
+    'work2Start',
+    'work2End',
+    'work3Start',
+    'work3End'
+  ].forEach(slot => {
+    const cell = document.getElementById(`work-punch-${slot}`);
+    if (!cell) return;
+    const value = record[slot];
+    const timeText = typeof value === 'string'
+      ? value
+      : (value && typeof value === 'object' && typeof value.time === 'string' ? value.time : '');
+    cell.textContent = timeText || '-';
+  });
+}
+
+function recordWorkPunch(slot) {
+  if (!slot) return;
+  const now = new Date();
+  const timeText = `${padTimePart(now.getHours())}:${padTimePart(now.getMinutes())}`;
+  const current = getWorkPunchRecord(selectedDate);
+  workPunchRecords = {
+    ...workPunchRecords,
+    [selectedDate]: {
+      ...current,
+      [slot]: {
+        time: timeText,
+        updatedAt: now.toISOString()
+      }
+    }
+  };
+  persistWorkPunchRecords();
+  renderWorkPunchTable(selectedDate);
+  triggerChangeSync();
+}
+
+function clearAssistTimerTicking() {
+  if (!assistTimerInterval) return;
+  clearInterval(assistTimerInterval);
+  assistTimerInterval = null;
+}
+
+function persistAssistTimerState() {
+  const value = {
+    durationMs: assistTimerDurationMs,
+    remainingMs: assistTimerRunning
+      ? Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt))
+      : assistTimerRemainingMs,
+    running: assistTimerRunning,
+    started: assistTimerStarted,
+    startAt: assistTimerRunning ? Date.now() : null
+  };
+  writeLocalJson(ASSIST_TIMER_STATE_LOCAL_KEY, value.started ? value : null);
+}
+
+function updateAssistTimerUI() {
+  const remainingMs = assistTimerRunning
+    ? Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt))
+    : assistTimerRemainingMs;
+  const percent = assistTimerDurationMs > 0
+    ? Math.max(0, Math.min(1, remainingMs / assistTimerDurationMs))
+    : 0;
+
+  if (assistTimerActiveEl) assistTimerActiveEl.classList.toggle('hidden', !assistTimerStarted);
+  if (assistTimerBarEl) assistTimerBarEl.style.width = `${Math.round(percent * 100)}%`;
+  if (assistTimerRemainingEl) assistTimerRemainingEl.textContent = formatAssistTimerText(remainingMs);
+  if (assistTimerToggleBtn) {
+    assistTimerToggleBtn.textContent = assistTimerRunning ? '暂停' : '继续';
+  }
+  if (assistQuickBtns.length) {
+    assistQuickBtns.forEach(button => {
+      const buttonMinutes = Number(button.dataset.minutes);
+      const isPreset = Number.isFinite(buttonMinutes) && buttonMinutes > 0;
+      const isActive = isPreset &&
+        assistTimerStarted &&
+        Math.round(assistTimerDurationMs / 60000) === buttonMinutes;
+      button.classList.toggle('is-active', isActive);
+    });
+  }
+}
+
+function tickAssistTimer() {
+  if (!assistTimerRunning) return;
+  const remainingMs = Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt));
+  if (remainingMs <= 0) {
+    assistTimerRunning = false;
+    assistTimerStarted = false;
+    assistTimerRemainingMs = 0;
+    assistTimerDurationMs = 0;
+    clearAssistTimerTicking();
+    updateAssistTimerUI();
+    persistAssistTimerState();
+    playAssistEndAlarm();
+    return;
+  }
+  updateAssistTimerUI();
+}
+
+function ensureAssistTimerTicking() {
+  if (assistTimerInterval) return;
+  assistTimerInterval = setInterval(tickAssistTimer, 250);
+}
+
+function startAssistTimer(minutes) {
+  const parsed = Number(minutes);
+  if (!Number.isFinite(parsed) || parsed <= 0) return;
+  assistTimerDurationMs = Math.floor(parsed * 60 * 1000);
+  assistTimerRemainingMs = assistTimerDurationMs;
+  assistTimerRunning = true;
+  assistTimerStarted = true;
+  assistTimerStartAt = Date.now();
+  ensureAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function pauseAssistTimer() {
+  if (!assistTimerRunning) return;
+  assistTimerRemainingMs = Math.max(0, assistTimerRemainingMs - (Date.now() - assistTimerStartAt));
+  assistTimerRunning = false;
+  clearAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function resumeAssistTimer() {
+  if (!assistTimerStarted || assistTimerRunning || assistTimerRemainingMs <= 0) return;
+  assistTimerRunning = true;
+  assistTimerStartAt = Date.now();
+  ensureAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function stopAssistTimer() {
+  assistTimerRunning = false;
+  assistTimerStarted = false;
+  assistTimerDurationMs = 0;
+  assistTimerRemainingMs = 0;
+  assistTimerStartAt = 0;
+  clearAssistTimerTicking();
+  updateAssistTimerUI();
+  persistAssistTimerState();
+}
+
+function restoreAssistTimerState() {
+  const value = readLocalJson(ASSIST_TIMER_STATE_LOCAL_KEY);
+  if (!value || !value.started) {
+    updateAssistTimerUI();
+    return;
+  }
+  if (!Number.isFinite(value.durationMs) || !Number.isFinite(value.remainingMs) || value.durationMs <= 0 || value.remainingMs < 0) {
+    updateAssistTimerUI();
+    return;
+  }
+
+  assistTimerDurationMs = value.durationMs;
+  assistTimerRemainingMs = value.remainingMs;
+  assistTimerStarted = true;
+  assistTimerRunning = false;
+
+  if (value.running && Number.isFinite(value.startAt)) {
+    const remainingMs = Math.max(0, value.remainingMs - (Date.now() - value.startAt));
+    if (remainingMs > 0) {
+      assistTimerRemainingMs = remainingMs;
+      assistTimerRunning = true;
+      assistTimerStartAt = Date.now();
+      ensureAssistTimerTicking();
+    } else {
+      stopAssistTimer();
+      playAssistEndAlarm();
+      return;
+    }
+  }
+
+  updateAssistTimerUI();
+  persistAssistTimerState();
 }
 
 function updateTimerUI(remainingMs) {
@@ -3338,19 +3956,21 @@ function setTimerStatus(text) {
 
 function hideTimerInlinePrompt() {
   timerInlinePromptAction = null;
-  if (timerInlinePromptEl) timerInlinePromptEl.classList.add('hidden');
 }
 
 function showTimerInlinePrompt(message, options = {}) {
-  if (!timerInlinePromptEl || !timerInlinePromptTextEl || !timerInlinePromptConfirmBtn || !timerInlinePromptCancelBtn) {
-    return;
-  }
-  timerInlinePromptTextEl.textContent = message;
-  timerInlinePromptConfirmBtn.textContent = options.confirmText || '确定';
-  timerInlinePromptCancelBtn.textContent = options.cancelText || '取消';
-  timerInlinePromptCancelBtn.classList.toggle('hidden', options.showCancel === false);
   timerInlinePromptAction = typeof options.onConfirm === 'function' ? options.onConfirm : null;
-  timerInlinePromptEl.classList.remove('hidden');
+  void openPromptModal(message, {
+    confirmText: options.confirmText || '确定',
+    cancelText: options.cancelText || '取消',
+    showCancel: options.showCancel !== false,
+    dismissOnBackdrop: false,
+    position: 'top'
+  }).then(confirmed => {
+    const action = timerInlinePromptAction;
+    hideTimerInlinePrompt();
+    if (confirmed && action) action();
+  });
 }
 
 function resetBellSchedule(now) {
@@ -3596,6 +4216,39 @@ if (timerToggleBtn) {
 }
 if (timerStopBtn) timerStopBtn.addEventListener('click', stopTimer);
 
+if (assistTimerToggleBtn) {
+  assistTimerToggleBtn.addEventListener('click', () => {
+    if (assistTimerRunning) pauseAssistTimer();
+    else resumeAssistTimer();
+  });
+}
+
+if (assistTimerStopBtn) {
+  assistTimerStopBtn.addEventListener('click', () => {
+    stopAssistTimer();
+  });
+}
+
+if (assistQuickBtns.length) {
+  assistQuickBtns.forEach(button => {
+    button.addEventListener('click', async () => {
+      if (button.dataset.custom === 'true') {
+        const input = await openAssistCustomModal('45');
+        if (input == null) return;
+        const minutes = Number(input);
+        if (!Number.isFinite(minutes) || minutes <= 0) return;
+        rememberAssistCustomPreset(minutes);
+        startAssistTimer(minutes);
+        return;
+      }
+      const minutes = Number(button.dataset.minutes);
+      if (!Number.isFinite(minutes) || minutes <= 0) return;
+      rememberAssistCustomPreset(minutes);
+      startAssistTimer(minutes);
+    });
+  });
+}
+
 if (timerInlinePromptConfirmBtn) {
   timerInlinePromptConfirmBtn.addEventListener('click', () => {
     const action = timerInlinePromptAction;
@@ -3614,9 +4267,26 @@ updateTimerUI(timerRemainingMs);
 setTimerStatus('未开始');
 if (timerVersionEl) timerVersionEl.textContent = `版本 ${APP_VERSION}`;
 updateToggleLabel();
+restoreAssistTimerPresets();
+updateAssistTimerUI();
 bgm.init();
 renderBgmStatus(bgm.getPlaybackState());
 bgm.subscribePlaybackState(renderBgmStatus);
+if (typeof bgm.subscribeDebug === 'function') {
+  bgm.subscribeDebug(renderBgmDebug);
+} else {
+  renderBgmDebug({
+    playbackState: bgm.getPlaybackState(),
+    shouldBePlaying: false,
+    userInteracted: false,
+    waitingForCanPlay: false,
+    retryOnNextInteraction: false,
+    reloadBeforeNextPlay: false,
+    volume: bgm.getVolume(),
+    audio: null,
+    logs: ['当前仍是旧版 bgm.js 缓存，调试日志能力未加载。请刷新到最新版本后重试。']
+  });
+}
 ensureTimerLeaseLoop();
 window.addEventListener('storage', event => {
   if (event.key !== TIMER_LEASE_KEY) return;
@@ -3625,18 +4295,14 @@ window.addEventListener('storage', event => {
 window.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     updateTimerLease();
-    void settlePreviousDayIfNeeded();
-    if (syncReady) {
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
-    }
+    void syncNaturalDayState();
   }
 });
 window.addEventListener('pagehide', () => {
   if (ownsTimerLease) releaseTimerLease();
 });
 daySettlementTimer = window.setInterval(() => {
-  void settlePreviousDayIfNeeded();
+  void syncNaturalDayState();
 }, 60 * 1000);
 if (bgmCurrentName) bgmCurrentName.textContent = bgmName;
 if (bgmVolume) {
@@ -3690,8 +4356,6 @@ const initPromise = initSync({
   onUpdate: updatedDates => {
     void restoreTimerTimeline();
     loadRecurrenceRules();
-    void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-    void syncDailyFatigueAnswersFromCloud();
     if (updatedDates.has(selectedDate)) {
       loadForDate();
     }
@@ -3702,25 +4366,18 @@ syncInitPromise = initPromise;
 initPromise.then(result => {
   syncReady = true;
   currentUserId = result && result.userId ? result.userId : null;
-  void syncRegretCoinLedgerFromCloud()
-    .then(() => reconcileSettlementRewardsFromCloud())
-    .then(() => settlePreviousDayIfNeeded());
-  void syncDailyFatigueAnswersFromCloud();
+  void syncNaturalDayState();
   if (pendingChangeSync) {
     void flushChangeSync();
   } else {
     setTimeout(() => {
       syncNow();
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
     }, 1200);
   }
   setInterval(() => {
     if (syncReady) {
       syncNow();
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   }, 5 * 60 * 1000);
 });
@@ -3729,9 +4386,7 @@ if (syncBtn) {
   syncBtn.addEventListener('click', () => {
     if (syncReady) {
       syncNow();
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -3740,9 +4395,7 @@ if (syncPullBtn) {
   syncPullBtn.addEventListener('click', () => {
     if (syncReady) {
       pullNow();
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -3751,9 +4404,7 @@ if (syncFullBtn) {
   syncFullBtn.addEventListener('click', () => {
     if (syncReady) {
       syncAllLocalToCloud();
-      void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-      void syncDailyFatigueAnswersFromCloud();
-      void settlePreviousDayIfNeeded({ force: true });
+      void syncNaturalDayState({ force: true });
     }
   });
 }
@@ -3761,9 +4412,7 @@ if (syncFullBtn) {
 window.addEventListener('online', () => {
   if (syncReady) {
     syncNow();
-    void syncRegretCoinLedgerFromCloud().then(() => reconcileSettlementRewardsFromCloud());
-    void syncDailyFatigueAnswersFromCloud();
-    void settlePreviousDayIfNeeded({ force: true });
+    void syncNaturalDayState({ force: true });
   }
 });
 
@@ -3776,6 +4425,12 @@ if (bgmToggleBtn) {
 if (bgmCloseBtn) {
   bgmCloseBtn.addEventListener('click', () => {
     if (bgmModal) bgmModal.classList.add('hidden');
+  });
+}
+
+if (bgmDebugCopyBtn) {
+  bgmDebugCopyBtn.addEventListener('click', () => {
+    void copyBgmDebugText();
   });
 }
 
@@ -3809,40 +4464,77 @@ if (promptConfirmBtn) {
 
 if (promptModal) {
   promptModal.addEventListener('click', event => {
-    if (event.target === promptModal) resolvePrompt(false);
+    if (event.target === promptModal && promptDismissOnBackdrop) resolvePrompt(false);
   });
 }
 
-if (dailySettlementCloseBtn) {
-  dailySettlementCloseBtn.addEventListener('click', closeDailySettlementModal);
-}
-
-if (dailySettlementModal) {
-  dailySettlementModal.addEventListener('click', event => {
-    if (event.target === dailySettlementModal) closeDailySettlementModal();
+if (assistCustomCloseBtn) {
+  assistCustomCloseBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(null);
   });
 }
 
-if (regretCoinSpendBtn) {
-  regretCoinSpendBtn.addEventListener('click', async () => {
-    const amount = Math.floor(Number(regretCoinSpendInput ? regretCoinSpendInput.value : 0));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setRegretCoinStatus('请输入大于 0 的消耗数量');
-      return;
+if (assistCustomCancelBtn) {
+  assistCustomCancelBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(null);
+  });
+}
+
+if (assistCustomConfirmBtn) {
+  assistCustomConfirmBtn.addEventListener('click', () => {
+    resolveAssistCustomModal(assistCustomInput ? assistCustomInput.value.trim() : '');
+  });
+}
+
+if (assistCustomInput) {
+  assistCustomInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      resolveAssistCustomModal(assistCustomInput.value.trim());
     }
-    const success = await consumeRegretCoins(amount);
-    if (!success) {
-      setRegretCoinStatus('后悔币不够');
-      return;
+    if (event.key === 'Escape') {
+      resolveAssistCustomModal(null);
     }
-    if (regretCoinSpendInput) regretCoinSpendInput.value = '1';
-    setRegretCoinStatus(`已消耗 ${amount} 个后悔币`);
   });
 }
 
-if (regretCoinSpendInput) {
-  regretCoinSpendInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && regretCoinSpendBtn) regretCoinSpendBtn.click();
+if (assistCustomModal) {
+  assistCustomModal.addEventListener('click', event => {
+    if (event.target === assistCustomModal) resolveAssistCustomModal(null);
+  });
+}
+
+if (problemReviewOpenBtn) {
+  problemReviewOpenBtn.addEventListener('click', () => {
+    openProblemReviewModal();
+  });
+}
+
+if (problemReviewCloseBtn) {
+  problemReviewCloseBtn.addEventListener('click', () => {
+    closeProblemReviewModal(true);
+  });
+}
+
+if (problemReviewConfirmBtn) {
+  problemReviewConfirmBtn.addEventListener('click', () => {
+    submitProblemReviewStep();
+  });
+}
+
+if (problemReviewInput) {
+  problemReviewInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      submitProblemReviewStep();
+    }
+    if (event.key === 'Escape') {
+      closeProblemReviewModal(true);
+    }
+  });
+}
+
+if (problemReviewModal) {
+  problemReviewModal.addEventListener('click', event => {
+    if (event.target === problemReviewModal) closeProblemReviewModal(true);
   });
 }
 
@@ -3944,6 +4636,7 @@ async function restoreAlarmVolume() {
 }
 
 restoreAlarmVolume();
+restoreAssistTimerState();
 
 // -------- Service Worker --------
 if ('serviceWorker' in navigator) {
@@ -3958,7 +4651,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260321-daily-settlement', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260331-recurrence-sync-fix-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
