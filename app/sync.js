@@ -111,7 +111,8 @@ function mapTodoToRemote(todo) {
     completed: todo.completed,
     created_at: todo.createdAt,
     updated_at: todo.updatedAt,
-    deleted_at: todo.deletedAt
+    deleted_at: todo.deletedAt,
+    parent_id: todo.parentId ?? null
   };
 }
 

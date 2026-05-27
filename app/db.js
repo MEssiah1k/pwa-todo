@@ -2,7 +2,7 @@ import { createScopedDbName } from './storage-scope.js?v=20260325-module-fix-1';
 
 const DB_NAME = 'todo-db';
 const STORE_NAME = 'todos';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 const SUMMARY_STORE = 'summaries';
 const META_STORE = 'meta';
 const RECURRENCE_STORE = 'recurrence_rules';
@@ -38,6 +38,9 @@ function openDbByName(name) {
         }
         if (!todoStore.indexNames.contains('updatedAt')) {
           todoStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        if (!todoStore.indexNames.contains('parentId')) {
+          todoStore.createIndex('parentId', 'parentId', { unique: false });
         }
       }
 
@@ -184,6 +187,16 @@ export async function getTodosByDate(date) {
     const index = store.index('date');
     const req = index.getAll(date);
     req.onsuccess = () => resolve(req.result);
+  });
+}
+
+export async function getTodosByParentId(parentId) {
+  const db = await openDB();
+  return new Promise(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result.filter(t => t.parentId === parentId));
   });
 }
 

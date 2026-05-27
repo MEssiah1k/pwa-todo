@@ -60,10 +60,6 @@ const timerTimelineSummary = document.getElementById('timer-timeline-summary');
 const contributionChart = document.getElementById('contribution-chart');
 const contributionSummary = document.getElementById('contribution-summary');
 const contributionTitle = document.getElementById('contribution-title');
-const taskStatusChart = document.getElementById('task-status-chart');
-const taskStatusSummary = document.getElementById('task-status-summary');
-const taskStatusTitle = document.getElementById('task-status-title');
-const workPunchBtns = Array.from(document.querySelectorAll('.work-punch-head-btn'));
 const timelineEditModal = document.getElementById('timeline-edit-modal');
 const timelineEditCloseBtn = document.getElementById('timeline-edit-close');
 const timelineEditTitle = document.getElementById('timeline-edit-title');
@@ -169,7 +165,6 @@ const TIMER_TIMELINE_MANUAL_OPS_KEY = 'timerTimelineManualOps';
 const TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerState');
 const ASSIST_TIMER_STATE_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerState');
 const ASSIST_TIMER_PRESETS_LOCAL_KEY = createScopedStorageKey('pwaTodo.assistTimerPresets');
-const WORK_PUNCH_LOCAL_KEY = createScopedStorageKey('pwaTodo.workPunchRecords');
 const TIMER_TIMELINE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineByDate');
 const TIMER_TIMELINE_ACTIVE_LOCAL_KEY = createScopedStorageKey('pwaTodo.timerTimelineActive');
 const TIMER_LEASE_KEY = createScopedStorageKey('pwaTodo.timerLease');
@@ -196,7 +191,6 @@ let contributionScores = new Map();
 let taskSummaryStatusByDate = new Map();
 let timerTimelineByDate = {};
 let activeTimerSegment = null;
-let workPunchRecords = {};
 let timelineEditingSegmentId = null;
 let timelineEditingDate = '';
 let timelineEditingDraft = [];
@@ -211,9 +205,6 @@ let contributionResizeRaf = 0;
 let contributionHalfKey = '';
 let contributionFollowCurrentHalf = true;
 let contributionLastCurrentHalfKey = '';
-let taskStatusMonthKey = '';
-let taskStatusFollowCurrentMonth = true;
-let taskStatusLastCurrentMonthKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const PROBLEM_REVIEW_QUESTIONS = [
   '1. 我现在应该推进的主方向是什么？',
@@ -632,18 +623,7 @@ function getActiveContributionPeriod(periods, currentPeriod) {
 
 function getActiveTaskStatusMonth(periods, currentPeriod) {
   if (!periods.length) return null;
-  if (
-    taskStatusFollowCurrentMonth &&
-    taskStatusLastCurrentMonthKey &&
-    taskStatusLastCurrentMonthKey !== currentPeriod.key
-  ) {
-    taskStatusMonthKey = currentPeriod.key;
-  }
-  taskStatusLastCurrentMonthKey = currentPeriod.key;
-  if (!taskStatusMonthKey || !periods.some(period => period.key === taskStatusMonthKey)) {
-    taskStatusMonthKey = currentPeriod.key;
-  }
-  return periods.find(period => period.key === taskStatusMonthKey) || currentPeriod;
+  return periods[0] || currentPeriod;
 }
 
 function updateContributionCellSize(wrapper) {
@@ -870,7 +850,9 @@ async function carryOverIncomplete(fromDate, toDate) {
 
     const userId = currentUserId ||
       (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
-    await addTodo({
+    const allFromTodos = await getTodosByDate(fromDate);
+    const children = allFromTodos.filter(t => !t.deletedAt && t.parentId === todo.id);
+    const newParentId = await addTodo({
       date: toDate,
       text: todo.text,
       completed: false,
@@ -886,6 +868,17 @@ async function carryOverIncomplete(fromDate, toDate) {
       userId
     });
     hasChanges = true;
+    // Carry over children too
+    for (const child of children) {
+      await addTodo({
+        date: toDate, text: child.text, completed: false,
+        queued: false, queueOrder: null,
+        createdAt: now, updatedAt: now, deletedAt: null,
+        dueMinutes: child.dueMinutes ?? null, recurrenceRuleId: null,
+        parentId: newParentId, uuid: generateUUID(), userId
+      });
+      hasChanges = true;
+    }
   }
   if (hasChanges) triggerChangeSync();
 }
@@ -918,6 +911,14 @@ async function moveTodoToTomorrow(todo) {
   }
 
   await clearTodoInProgress(todo.uuid);
+  // Move children too
+  const allToday = await getTodosByDate(sourceDate);
+  for (const child of allToday) {
+    if (!child.deletedAt && child.parentId === todo.id) {
+      await updateTodo({ ...child, date: tomorrowDate, updatedAt: now });
+      await clearTodoInProgress(child.uuid);
+    }
+  }
   triggerChangeSync();
   return true;
 }
@@ -929,79 +930,125 @@ function renderTodos() {
   runningTimeEls.clear();
   const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
   const activeTodos = todos.filter(todo => !todo.deletedAt);
-  const pendingTodos = activeTodos
-    .filter(todo => !todo.completed)
-    .sort(comparePendingTodos);
+
+  const childrenByParent = new Map();
+  const rootTodos = [];
+  for (const t of activeTodos) {
+    if (t.parentId != null) {
+      const arr = childrenByParent.get(t.parentId) || [];
+      arr.push(t);
+      childrenByParent.set(t.parentId, arr);
+    } else {
+      rootTodos.push(t);
+    }
+  }
+
+  const hasPendingChildren = parentId =>
+    (childrenByParent.get(parentId) || []).some(c => !c.deletedAt && !c.completed);
+  const hasCompletedChildren = parentId =>
+    (childrenByParent.get(parentId) || []).some(c => !c.deletedAt && c.completed);
+  const getPendingChildren = parentId =>
+    (childrenByParent.get(parentId) || []).filter(c => !c.deletedAt && !c.completed)
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
+  const getCompletedChildren = parentId =>
+    (childrenByParent.get(parentId) || []).filter(c => !c.deletedAt && c.completed)
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
+  const getAllChildren = parentId =>
+    (childrenByParent.get(parentId) || [])
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
+  const countProgress = items => {
+    let total = 0, done = 0;
+    for (const item of items) { total++; if (item.completed) done++; }
+    return { total, done };
+  };
+
   const matchesSelectedCategory = todo => {
     if (selectedCategoryFilter === 'All') return true;
     return parseCategorizedText(todo.text).category === selectedCategoryFilter;
   };
-  const queuedTodos = pendingTodos
-    .filter(todo => isTodoQueued(todo))
-    .sort(compareQueuedTodos);
-  const listTodos = pendingTodos
-    .filter(todo => !isTodoQueued(todo))
-    .filter(matchesSelectedCategory)
-    .sort(comparePendingTodos);
-  const doneTodos = activeTodos
-    .filter(todo => todo.completed)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
-      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
-      return bTime - aTime;
+
+  // Pending: root tasks that are incomplete themselves OR have incomplete children
+  const pendingRoots = rootTodos.filter(t =>
+    !t.completed || hasPendingChildren(t.id)
+  ).sort(comparePendingTodos);
+
+  const queuedTodos = pendingRoots.filter(t => isTodoQueued(t)).sort(compareQueuedTodos);
+  const listTodos = pendingRoots.filter(t => !isTodoQueued(t) && matchesSelectedCategory(t)).sort(comparePendingTodos);
+
+  // Done: root tasks that are completed themselves OR have completed children  
+  const doneRoots = rootTodos.filter(t =>
+    t.completed || hasCompletedChildren(t.id)
+  ).sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
+
+  const showSubTaskInput = (parentTodo, parentLi) => {
+    parentLi.classList.add('is-parent');
+    const existing = parentLi.querySelector('.todo-sub-input-row');
+    if (existing) { existing.remove(); return; }
+    const row = document.createElement('div');
+    row.className = 'todo-sub-input-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = '输入子任务';
+    const btn = document.createElement('button');
+    btn.textContent = '添加';
+    const doAdd = async () => {
+      const raw = input.value.trim();
+      if (!raw) return;
+      const now = new Date().toISOString();
+      const userId = currentUserId || ensureUserId();
+      await addTodo({
+        date: selectedDate, text: raw, completed: false,
+        parentId: parentTodo.id, createdAt: now, updatedAt: now, deletedAt: null,
+        dueMinutes: null, recurrenceRuleId: null, uuid: generateUUID(), userId
+      });
+      triggerChangeSync();
+      loadTodos();
+    };
+    btn.onclick = async () => { await doAdd(); };
+    input.addEventListener('keydown', async e => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); await doAdd(); }
     });
+    input.addEventListener('click', e => { e.stopPropagation(); });
+    row.addEventListener('click', e => { e.stopPropagation(); });
+    input.addEventListener('blur', () => { setTimeout(() => row.remove(), 200); });
+    row.appendChild(input);
+    row.appendChild(btn);
+    parentLi.appendChild(row);
+    setTimeout(() => input.focus(), 50);
+  };
 
-  if (todoQueuePanel) {
-    todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
-  }
-
-  updateTodoFilterNavButtons(pendingTodos);
-
-  const renderTodoItem = (todo, targetList, group = 'list') => {
+  const renderTodoItem = (todo, targetList, group = 'list', isChild = false, children = []) => {
     const li = document.createElement('li');
-    li.className = todo.completed ? 'completed' : '';
+    li.className = 'todo-item';
+    if (todo.completed) li.classList.add('completed');
     if (isTodoInProgress(todo)) li.classList.add('in-progress');
+    if (children.length > 0) li.classList.add('is-parent');
+    if (isChild) li.classList.add('is-child');
     li.dataset.id = String(todo.id);
     li.dataset.group = group;
-    li.draggable = targetList === list || targetList === todoQueueList;
 
-    if (targetList === list || targetList === todoQueueList) {
+    if (!isChild && (targetList === list || targetList === todoQueueList)) {
+      li.draggable = true;
       li.ondragstart = event => {
-        if (li.classList.contains('editing')) {
-          event.preventDefault();
-          return;
-        }
-        draggedTodoId = todo.id;
-        draggedTodoGroup = group;
+        if (li.classList.contains('editing')) { event.preventDefault(); return; }
+        draggedTodoId = todo.id; draggedTodoGroup = group;
         li.classList.add('todo-dragging');
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('text/plain', String(todo.id));
-        }
+        if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(todo.id)); }
       };
-      li.ondragend = () => {
-        draggedTodoId = null;
-        draggedTodoGroup = null;
-        li.classList.remove('todo-dragging');
-        clearTodoDropIndicatorClasses();
-      };
+      li.ondragend = () => { draggedTodoId = null; draggedTodoGroup = null; li.classList.remove('todo-dragging'); clearTodoDropIndicatorClasses(); };
       li.ondragover = event => {
         if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
         event.preventDefault();
-        const insertAfter = shouldInsertAfter(event, li);
-        li.classList.toggle('todo-drop-before', !insertAfter);
-        li.classList.toggle('todo-drop-after', insertAfter);
+        li.classList.toggle('todo-drop-before', !shouldInsertAfter(event, li));
+        li.classList.toggle('todo-drop-after', shouldInsertAfter(event, li));
       };
-      li.ondragleave = () => {
-        li.classList.remove('todo-drop-before', 'todo-drop-after');
-      };
+      li.ondragleave = () => li.classList.remove('todo-drop-before', 'todo-drop-after');
       li.ondrop = async event => {
         if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
         event.preventDefault();
-        const insertAfter = shouldInsertAfter(event, li);
         suppressTodoClickUntil = Date.now() + 300;
         clearTodoDropIndicatorClasses();
-        await reorderPendingTodos(draggedTodoId, todo.id, insertAfter, group);
+        await reorderPendingTodos(draggedTodoId, todo.id, shouldInsertAfter(event, li), group);
       };
     }
 
@@ -1009,34 +1056,12 @@ function renderTodos() {
     content.className = 'todo-content';
     const mainRow = document.createElement('div');
     mainRow.className = 'todo-main';
+
     const text = document.createElement('span');
     text.className = 'todo-text';
     text.textContent = todo.text;
-    text.ondblclick = event => {
-      event.stopPropagation();
-      beginTodoEdit(todo, li, mainRow, text);
-    };
+    text.ondblclick = event => { event.stopPropagation(); beginTodoEdit(todo, li, mainRow, text); };
     mainRow.appendChild(text);
-
-    const del = document.createElement('button');
-    del.className = 'delete-btn';
-    del.type = 'button';
-    del.textContent = '删除';
-    del.onclick = async event => {
-      event.stopPropagation();
-      const now = new Date().toISOString();
-      await updateTodo({
-        ...todo,
-        deletedAt: now,
-        updatedAt: now
-      });
-      if (todo.recurrenceRuleId != null) {
-        await addRecurrenceSkip(todo.date, Number(todo.recurrenceRuleId));
-      }
-      await clearTodoInProgress(todo.uuid);
-      triggerChangeSync();
-      loadTodos();
-    };
 
     if (Number.isFinite(todo.dueMinutes)) {
       const due = document.createElement('span');
@@ -1044,8 +1069,14 @@ function renderTodos() {
       due.textContent = `预计 ${todo.dueMinutes} min`;
       mainRow.appendChild(due);
     }
+    if (children.length > 0) {
+      const { total, done } = countProgress(children);
+      const prog = document.createElement('span');
+      prog.className = 'todo-progress';
+      prog.textContent = `[${done}/${total}]`;
+      mainRow.appendChild(prog);
+    }
     content.appendChild(mainRow);
-
     if (isTodoInProgress(todo) && todo.uuid) {
       const runningTime = document.createElement('div');
       runningTime.className = 'todo-running-time';
@@ -1054,15 +1085,34 @@ function renderTodos() {
       content.appendChild(runningTime);
     }
 
-    const progressBtn = document.createElement('button');
-    progressBtn.className = 'progress-btn';
-    progressBtn.type = 'button';
-    progressBtn.textContent = isTodoInProgress(todo) ? '停止' : '进行';
-    progressBtn.onclick = async event => {
+    const actions = document.createElement('div');
+    actions.className = 'todo-actions';
+
+    if (!isChild) {
+      const subBtn = document.createElement('button');
+      subBtn.className = 'todo-sub-btn';
+      subBtn.type = 'button';
+      subBtn.textContent = '+';
+      subBtn.title = '添加子任务';
+      subBtn.onclick = e => { e.stopPropagation(); showSubTaskInput(todo, li); };
+      actions.appendChild(subBtn);
+    }
+
+    const queueBtn = document.createElement('button');
+    queueBtn.className = 'queue-btn';
+    queueBtn.type = 'button';
+    queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
+    queueBtn.onclick = async event => {
       event.stopPropagation();
-      const changed = await toggleTodoInProgress(todo);
-      if (changed) loadTodos();
+      const now = new Date().toISOString();
+      if (isTodoQueued(todo)) {
+        await updateTodo({ ...todo, queued: false, queueOrder: null, sortOrder: getNextPendingSortOrder(), updatedAt: now });
+      } else {
+        await updateTodo({ ...todo, queued: true, queueOrder: getNextQueuedSortOrder(), updatedAt: now });
+      }
+      triggerChangeSync(); loadTodos();
     };
+    if (!todo.completed) actions.appendChild(queueBtn);
 
     const moveBtn = document.createElement('button');
     moveBtn.className = 'move-btn';
@@ -1073,81 +1123,86 @@ function renderTodos() {
       const changed = await moveTodoToTomorrow(todo);
       if (changed) loadTodos();
     };
+    actions.appendChild(moveBtn);
 
-    const queueBtn = document.createElement('button');
-    queueBtn.className = 'queue-btn';
-    queueBtn.type = 'button';
-    queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
-    queueBtn.onclick = async event => {
+    const progressBtn = document.createElement('button');
+    progressBtn.className = 'progress-btn';
+    progressBtn.type = 'button';
+    progressBtn.textContent = isTodoInProgress(todo) ? '停止' : '进行';
+    progressBtn.onclick = async event => {
+      event.stopPropagation();
+      const target = children.length > 0 ? (getPendingChildren(todo.id)[0] || children[0]) : todo;
+      const changed = await toggleTodoInProgress(target);
+      if (changed) loadTodos();
+    };
+    actions.appendChild(progressBtn);
+
+    const del = document.createElement('button');
+    del.className = 'delete-btn';
+    del.type = 'button';
+    del.textContent = '删除';
+    del.onclick = async event => {
       event.stopPropagation();
       const now = new Date().toISOString();
-      if (isTodoQueued(todo)) {
-        await updateTodo({
-          ...todo,
-          queued: false,
-          queueOrder: null,
-          sortOrder: getNextPendingSortOrder(),
-          updatedAt: now
-        });
-      } else {
-        await updateTodo({
-          ...todo,
-          queued: true,
-          queueOrder: getNextQueuedSortOrder(),
-          updatedAt: now
-        });
+      const toDelete = [todo, ...getAllChildren(todo.id)];
+      for (const t of toDelete) {
+        await updateTodo({ ...t, deletedAt: now, updatedAt: now });
+        if (t.recurrenceRuleId != null) await addRecurrenceSkip(t.date, Number(t.recurrenceRuleId));
+        await clearTodoInProgress(t.uuid);
       }
-      triggerChangeSync();
-      loadTodos();
+      triggerChangeSync(); loadTodos();
     };
-
-    const actions = document.createElement('div');
-    actions.className = 'todo-actions';
-    if (!todo.completed) actions.appendChild(queueBtn);
-    actions.appendChild(moveBtn);
-    actions.appendChild(progressBtn);
     actions.appendChild(del);
-    li.appendChild(content);
-    li.appendChild(actions);
-    li.onclick = async event => {
-      if (Date.now() < suppressTodoClickUntil) return;
-      if (event.detail > 1) return;
-      if (li.classList.contains('editing')) return;
-      const nextCompleted = !todo.completed;
-      const shouldAskMorningWakeup = nextCompleted && shouldPromptMorningWakeup(todo);
-      await updateTodo({
-        ...todo,
-        completed: nextCompleted,
-        queued: nextCompleted ? false : todo.queued,
-        queueOrder: nextCompleted ? null : todo.queueOrder ?? null,
-        updatedAt: new Date().toISOString()
-      });
-      if (nextCompleted) await clearTodoInProgress(todo.uuid);
-      triggerChangeSync();
-      loadTodos();
-      if (shouldAskMorningWakeup) {
-        void openPromptModal(
-          '早安呀，今天也要元气满满。\n闹钟响了之后，你有马上起床，没有继续赖床吧？',
-          {
-            confirmText: '是',
-            cancelText: '否'
-          }
-        );
-      }
-    };
+
+    const topRow = document.createElement('div');
+    topRow.className = 'todo-top-row';
+    topRow.appendChild(content);
+    topRow.appendChild(actions);
+    li.appendChild(topRow);
+
+    // Click toggle: child toggles itself; root toggles itself
+    if (isChild) {
+      li.onclick = async () => {
+        if (Date.now() < suppressTodoClickUntil) return;
+        const now = new Date().toISOString();
+        await updateTodo({ ...todo, completed: !todo.completed, updatedAt: now });
+        if (!todo.completed) await clearTodoInProgress(todo.uuid);
+        triggerChangeSync(); loadTodos();
+      };
+    } else if (!children.length) {
+      li.onclick = async () => {
+        if (Date.now() < suppressTodoClickUntil) return;
+        if (li.classList.contains('editing')) return;
+        const nextCompleted = !todo.completed;
+        await updateTodo({ ...todo, completed: nextCompleted, queued: nextCompleted ? false : todo.queued, queueOrder: nextCompleted ? null : todo.queueOrder ?? null, updatedAt: new Date().toISOString() });
+        if (nextCompleted) await clearTodoInProgress(todo.uuid);
+        triggerChangeSync(); loadTodos();
+      };
+    }
+
+    // Render children
+    if (children.length > 0) {
+      const chWrapper = document.createElement('ul');
+      chWrapper.className = 'todo-children';
+      chWrapper.style.cssText = 'list-style:none;padding:0;margin:4px 0 0';
+      for (const child of children) renderTodoItem(child, chWrapper, group, true, []);
+      li.appendChild(chWrapper);
+    }
+
     targetList.appendChild(li);
   };
 
-  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue'));
-  listTodos.forEach(todo => renderTodoItem(todo, list, 'list'));
+  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue', false, getPendingChildren(todo.id)));
+  listTodos.forEach(todo => renderTodoItem(todo, list, 'list', false, getPendingChildren(todo.id)));
   if (completedList) {
-    doneTodos.forEach(todo => renderTodoItem(todo, completedList));
+    doneRoots.forEach(todo => renderTodoItem(todo, completedList, 'list', false, getCompletedChildren(todo.id)));
   }
   if (completedModule) {
-    completedModule.classList.toggle('hidden', doneTodos.length === 0);
+    completedModule.classList.toggle('hidden', doneRoots.length === 0);
   }
-}
 
+  if (todoFilterCategory) updateTodoFilterNavButtons(pendingRoots);
+}
 function getPendingTodoCountsByCategory(todoList = todos) {
   const counts = new Map(TODO_FILTER_SEQUENCE.map(category => [category, 0]));
   const pendingTodos = todoList.filter(todo => todo && !todo.deletedAt && !todo.completed);
@@ -1920,7 +1975,6 @@ function renderTimerTimeline() {
 }
 
 async function renderContributionChart() {
-  if (!contributionChart && !taskStatusChart) return;
   const allSummaries = await getAllSummaries();
   const latestByDate = new Map();
   const summaryTextStatusByDate = new Map();
@@ -2126,7 +2180,6 @@ async function renderContributionChart() {
   });
 
   const taskStats = buildChart({
-    chartEl: taskStatusChart,
     includePeriodNav: true,
     periods: taskPeriods,
     currentPeriod: taskCurrentPeriod,
@@ -2134,9 +2187,6 @@ async function renderContributionChart() {
     getRange: getContributionMonthRange,
     formatPeriodLabel: formatContributionMonthLabel,
     onPeriodChange: (period, currentPeriod) => {
-      if (taskStatusMonthKey === period.key) return;
-      taskStatusMonthKey = period.key;
-      taskStatusFollowCurrentMonth = period.key === currentPeriod.key;
       void renderContributionChart();
     },
     transpose: true,
@@ -2173,15 +2223,11 @@ async function renderContributionChart() {
       recentTotal += contributionScores.get(formatDateLocal(date)) ?? 0;
     }
     contributionSummary.textContent = `最近${recentDays}天平均 ${(recentTotal / recentDays).toFixed(1)} 次`;
-  }
-  if (taskStatusTitle) {
-    taskStatusTitle.textContent = formatContributionMonthTitle(activeTaskPeriod);
-  }
-  if (taskStatusChart) {
-    taskStatusChart.setAttribute('aria-label', `${formatContributionMonthTitle(activeTaskPeriod)}\u53ef\u89c6\u5316\u56fe`);
-  }
-  if (taskStatusSummary) {
-    taskStatusSummary.textContent = `已写 ${taskStats.countA} 天，未写 ${taskStats.countB} 天，未来 ${taskStats.countC} 天`;
+    const avgWorkEl = document.getElementById('avg-work-hours');
+    if (avgWorkEl) {
+      const avgHours = ((recentTotal / recentDays) * 1.5).toFixed(1);
+      avgWorkEl.textContent = `日均工作时长 ${avgHours}h（1次=1.5h）`;
+    }
   }
 }
 
@@ -2190,7 +2236,6 @@ window.addEventListener('resize', () => {
   contributionResizeRaf = requestAnimationFrame(() => {
     contributionResizeRaf = 0;
     updateContributionCellSize(contributionChart?.querySelector('.contribution-grid'));
-    updateContributionCellSize(taskStatusChart?.querySelector('.contribution-grid'));
   });
 });
 
@@ -3067,8 +3112,6 @@ summaryInput.addEventListener('blur', () => {
 // -------- Date module --------
 async function loadForDate() {
   await Promise.all([loadTodos(), loadSummaries()]);
-  restoreWorkPunchRecords();
-  renderWorkPunchTable(selectedDate);
 }
 
 if (datePrevBtn) {
@@ -3098,16 +3141,6 @@ if (datePicker) {
     if (datePicker.value) setSelectedDate(datePicker.value);
   });
 }
-
-if (workPunchBtns.length) {
-  workPunchBtns.forEach(button => {
-    button.addEventListener('click', () => {
-      recordWorkPunch(button.dataset.slot);
-    });
-  });
-}
-
-restoreWorkPunchRecords();
 
 setSelectedDate(selectedDate);
 
@@ -3739,64 +3772,7 @@ function restoreAssistTimerPresets() {
   assistTimerPresets = normalizeAssistTimerPresets(readLocalJson(ASSIST_TIMER_PRESETS_LOCAL_KEY));
   renderAssistTimerPresets();
 }
-
-function restoreWorkPunchRecords() {
-  const value = readLocalJson(WORK_PUNCH_LOCAL_KEY);
-  workPunchRecords = value && typeof value === 'object' ? value : {};
-}
-
-function persistWorkPunchRecords() {
-  writeLocalJson(WORK_PUNCH_LOCAL_KEY, workPunchRecords);
-}
-
-function getWorkPunchRecord(dateStr = selectedDate) {
-  const record = workPunchRecords && typeof workPunchRecords === 'object'
-    ? workPunchRecords[dateStr]
-    : null;
-  return record && typeof record === 'object' ? record : {};
-}
-
-function renderWorkPunchTable(dateStr = selectedDate) {
-  const record = getWorkPunchRecord(dateStr);
-  [
-    'work1Start',
-    'work1End',
-    'work2Start',
-    'work2End',
-    'work3Start',
-    'work3End'
-  ].forEach(slot => {
-    const cell = document.getElementById(`work-punch-${slot}`);
-    if (!cell) return;
-    const value = record[slot];
-    const timeText = typeof value === 'string'
-      ? value
-      : (value && typeof value === 'object' && typeof value.time === 'string' ? value.time : '');
-    cell.textContent = timeText || '-';
-  });
-}
-
-function recordWorkPunch(slot) {
-  if (!slot) return;
-  const now = new Date();
-  const timeText = `${padTimePart(now.getHours())}:${padTimePart(now.getMinutes())}`;
-  const current = getWorkPunchRecord(selectedDate);
-  workPunchRecords = {
-    ...workPunchRecords,
-    [selectedDate]: {
-      ...current,
-      [slot]: {
-        time: timeText,
-        updatedAt: now.toISOString()
-      }
-    }
-  };
-  persistWorkPunchRecords();
-  renderWorkPunchTable(selectedDate);
-  triggerChangeSync();
-}
-
-function clearAssistTimerTicking() {
+  function clearAssistTimerTicking() {
   if (!assistTimerInterval) return;
   clearInterval(assistTimerInterval);
   assistTimerInterval = null;
@@ -4638,7 +4614,6 @@ async function restoreAlarmVolume() {
 restoreAlarmVolume();
 restoreAssistTimerState();
 
-// -------- Service Worker --------
 if ('serviceWorker' in navigator) {
   let swRegistration = null;
   const promptForUpdate = () => {
