@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PWA Todo</title>
-  <link rel="stylesheet" href="style.css?v=20260330-problem-review-1" />
+  <link rel="stylesheet" href="style.css?v=20260529-prayer-1" />
   <link rel="manifest" href="app/manifest.json?v=20260330-problem-review-1" />
 </head>
 <body class="dark">
@@ -201,6 +201,7 @@
             </select>
           </div>
         </div>
+        <textarea id="recurrence-children-text" rows="2" placeholder="子任务（每行一个，可选）" style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input);color:var(--text);font:inherit"></textarea>
         <div class="recurrence-form-actions">
           <button id="recurrence-add" type="button">新增</button>
         </div>
@@ -272,6 +273,7 @@
             </select>
           </div>
         </div>
+        <textarea id="recurrence-edit-children-text" rows="2" placeholder="子任务（每行一个，可选）" style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input);color:var(--text);font:inherit"></textarea>
         <div class="recurrence-form-actions">
           <button id="recurrence-edit-cancel" type="button">取消</button>
           <button id="recurrence-edit-save" type="button">保存</button>
@@ -311,7 +313,7 @@
     <h2>已完成事项</h2>
     <ul id="completed-list"></ul>
   </section>
-  <script type="module" src="app/app.js?v=20260331-recurrence-sync-fix-1"></script>
+  <script type="module" src="app/app.js?v=20260529-prayer-1"></script>
   </div>
 
   <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
@@ -399,6 +401,15 @@
       </div>
       <div class="prompt-actions">
         <button id="problem-review-confirm" type="button" class="progress-btn prompt-confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="prayer-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="prayer-title">
+    <div class="modal-card prayer-card">
+      <div id="prayer-text" class="prayer-text"></div>
+      <div class="prayer-actions">
+        <button id="prayer-confirm" type="button" class="progress-btn prayer-confirm-btn" disabled>请静候 30 秒</button>
       </div>
     </div>
   </div>

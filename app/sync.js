@@ -136,7 +136,8 @@ function mapTodoFromRemote(row) {
     completed: Boolean(row.completed),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at || null
+    deletedAt: row.deleted_at || null,
+    parentId: row.parent_id ?? null
   };
 }
 
@@ -150,6 +151,7 @@ function mapRecurrenceRuleToRemote(rule) {
     month: rule.month ?? null,
     interval: rule.interval ?? null,
     unit: rule.unit ?? null,
+    children: Array.isArray(rule.children) ? rule.children : null,
     created_at: rule.createdAt,
     updated_at: rule.updatedAt,
     deleted_at: rule.deletedAt ?? null
@@ -166,9 +168,11 @@ function mapRecurrenceRuleFromRemote(row) {
     month: row.month ?? null,
     interval: row.interval ?? null,
     unit: row.unit ?? null,
+    children: Array.isArray(row.children) ? row.children : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at || null
+    deletedAt: row.deleted_at || null,
+    parentId: row.parent_id ?? null
   };
 }
 
@@ -256,7 +260,8 @@ function mapSummaryFromRemote(row) {
     rating: row.rating ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at || null
+    deletedAt: row.deleted_at || null,
+    parentId: row.parent_id ?? null
   };
 }
 
@@ -1233,6 +1238,9 @@ function mergeTodoForPull(local, remote) {
   if (!merged.userId && local.userId) {
     merged.userId = local.userId;
   }
+  if (merged.parentId == null && local.parentId != null) {
+    merged.parentId = local.parentId;
+  }
 
   // 冲突时“已完成”优先于“未完成”
   const completedMerged = Boolean(local.completed) || Boolean(remote.completed);
@@ -1256,6 +1264,7 @@ function shouldUpdateTodo(local, next) {
     Boolean(local.queued) !== Boolean(next.queued) ||
     (local.queueOrder ?? null) !== (next.queueOrder ?? null) ||
     (local.sortOrder ?? null) !== (next.sortOrder ?? null) ||
+    (local.parentId ?? null) !== (next.parentId ?? null) ||
     (local.userId ?? null) !== (next.userId ?? null) ||
     (local.createdAt || '') !== (next.createdAt || '') ||
     (local.updatedAt || '') !== (next.updatedAt || '') ||

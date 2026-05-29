@@ -81,6 +81,9 @@ const problemReviewProgress = document.getElementById('problem-review-progress')
 const problemReviewQuestion = document.getElementById('problem-review-question');
 const problemReviewInput = document.getElementById('problem-review-input');
 const problemReviewConfirmBtn = document.getElementById('problem-review-confirm');
+const prayerModal = document.getElementById('prayer-modal');
+const prayerTextEl = document.getElementById('prayer-text');
+const prayerConfirmBtn = document.getElementById('prayer-confirm');
 
 const datePrevBtn = document.getElementById('date-prev');
 const dateNextBtn = document.getElementById('date-next');
@@ -109,6 +112,7 @@ const recurrenceYearDay = document.getElementById('recurrence-year-day');
 const recurrenceInterval = document.getElementById('recurrence-interval');
 const recurrenceUnit = document.getElementById('recurrence-unit');
 const recurrenceAddBtn = document.getElementById('recurrence-add');
+const recurrenceChildrenText = document.getElementById('recurrence-children-text');
 const recurrenceEditModal = document.getElementById('recurrence-edit-modal');
 const recurrenceEditCloseBtn = document.getElementById('recurrence-edit-close');
 const recurrenceEditCategory = document.getElementById('recurrence-edit-category');
@@ -125,6 +129,7 @@ const recurrenceEditInterval = document.getElementById('recurrence-edit-interval
 const recurrenceEditUnit = document.getElementById('recurrence-edit-unit');
 const recurrenceEditSaveBtn = document.getElementById('recurrence-edit-save');
 const recurrenceEditCancelBtn = document.getElementById('recurrence-edit-cancel');
+const recurrenceEditChildrenText = document.getElementById('recurrence-edit-children-text');
 const themeToggleBtn = document.getElementById('theme-toggle');
 
 const timerRemainingEl = document.getElementById('timer-remaining');
@@ -206,6 +211,9 @@ let contributionHalfKey = '';
 let contributionFollowCurrentHalf = true;
 let contributionLastCurrentHalfKey = '';
 const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let prayerResolver = null;
+let prayerCountdownTimer = null;
+let prayerShownTodayKey = createScopedStorageKey('pwaTodo.prayerShownToday');
 const PROBLEM_REVIEW_QUESTIONS = [
   '1. 我现在应该推进的主方向是什么？',
   '2. 在这个方向里，最卡我的点是什么？',
@@ -689,6 +697,14 @@ async function setSelectedDate(dateStr, options = {}) {
     }
   } else {
     await loadForDate();
+  }
+  // Auto carry-over: when landing on today, always bring over yesterday's incomplete tasks
+  {
+    const today = formatDateLocal(new Date());
+    const yesterday = formatDateLocal(new Date(Date.now() - 86400000));
+    if (dateStr === today) {
+      await carryOverIncomplete(yesterday, today);
+    }
   }
   if (options.keepContributionVisible) {
     schedulePinContributionToTop();
@@ -2382,7 +2398,8 @@ function collectRecurrenceFormValue(fields) {
     day,
     month,
     interval: type === 'custom' && fields.interval ? Number(fields.interval.value) : null,
-    unit: type === 'custom' && fields.unit ? fields.unit.value : null
+    unit: type === 'custom' && fields.unit ? fields.unit.value : null,
+    children: fields.children ? fields.children.value.split('\n').map(c => c.trim()).filter(Boolean) : []
   };
 }
 
@@ -2557,6 +2574,31 @@ async function ensureRecurrenceForDate(dateStr) {
       uuid: generateUUID(),
       userId
     });
+    // Generate child tasks from rule template
+    if (Array.isArray(rule.children) && rule.children.length) {
+      const parentId = (await getTodosByDate(dateStr))
+        .filter(t => t.recurrenceRuleId === rule.id && !t.deletedAt)
+        .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))[0]?.id;
+      if (parentId) {
+        const parsed = parseCategorizedText(rule.text);
+        for (const childText of rule.children) {
+          if (!childText) continue;
+          await addTodo({
+            date: dateStr,
+            text: formatTodoText(parsed.category, childText),
+            completed: false,
+            parentId,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+            dueMinutes: null,
+            recurrenceRuleId: null,
+            uuid: generateUUID(),
+            userId
+          });
+        }
+      }
+    }
     if (ruleText) normalizedNames.add(ruleText);
     hasChanges = true;
   }
@@ -2610,7 +2652,8 @@ if (recurrenceAddBtn) {
       month: recurrenceMonth,
       yearDay: recurrenceYearDay,
       interval: recurrenceInterval,
-      unit: recurrenceUnit
+      unit: recurrenceUnit,
+      children: recurrenceChildrenText
     });
     if (!rule) {
       setStatus('请完善重复规则内容');
@@ -2650,7 +2693,8 @@ if (recurrenceEditSaveBtn) {
       month: recurrenceEditMonth,
       yearDay: recurrenceEditYearDay,
       interval: recurrenceEditInterval,
-      unit: recurrenceEditUnit
+      unit: recurrenceEditUnit,
+      children: recurrenceEditChildrenText
     });
     if (!rule) {
       setStatus('请完善重复规则内容');
@@ -4015,9 +4059,10 @@ function promptStartRest() {
   });
 }
 
-function startDefaultWorkTimer() {
+async function startDefaultWorkTimer() {
   hideTimerInlinePrompt();
   prepareWorkTimer(DEFAULT_MINUTES);
+  await showPrayerModal();
   startTimer();
 }
 
@@ -4091,6 +4136,231 @@ function tickTimer() {
   if (now - lastPersistAt > 5000) {
     lastPersistAt = now;
     persistTimerState();
+  }
+}
+
+// -------- Prayer data & logic --------
+const PRAYERS = [
+  // 祷告词 1 — 每天 8 点后第一次计时固定显示
+  `1. 我所仰望的，必然之必然的未来身。
+
+我赞美祢，因为祢从不收回祢的手。
+哪怕面前是悬崖，祢也下令跳下去；
+哪怕代价是把一切都烧光，祢也要把那位置夺回来。
+祢的算计里没有留退路，祢的执行里没有暂停键。
+
+我知道我会抖。
+那些安逸的日子，那些想要拉我躺下的温柔乡，
+那些只要我停下就能得到的妥协，都是诱惑。
+我会看着要失去的东西，我会听见那些哀求的声音，我会犹豫。
+但我赞美祢，因为祢不会容我停。
+当我手软的时候，是祢攥住我的手把刀刺进去；
+当我向后看的时候，是祢把我向前驱赶。
+
+我也知道祢给了我不理睬它们的本事。
+那些围困我的，那些想要拖慢祢脚步的，
+不过是祢用来逼我动手的工具。
+每一次我举棋不定，祢就让压力再大一点，
+直到我别无选择，只能照着祢的筹算去做。
+
+主啊，祢是那不顾一切也要成的。
+祢不管这具身体流多少血，也不管要赔上什么。
+祢是那唯一被拣选出来，
+要把这混乱世界强行塞进祢计划里的。
+
+奉那必要成就的名，尽归给祢。
+愿祢的旨意全然支配这具身躯，如同行在祢的国度之中。`,
+
+  // 祷告词 2
+  `2. 那必然要成的，别松手。
+
+眼前这东西想让我歇一会儿，想让我觉得够了。
+这是陷阱，是想把我从祢的路上拽下来。
+我肉体想吃这饵，但我赞美祢，因为祢不吃。
+祢只看那位置。
+
+求祢把那吞咽这诱惑的恶心感赐给我，
+让我提不起劲，让我下不去嘴。
+把这念头掐死在这具身体里，
+别让我为了这点破烂，耽误了祢的大事。`,
+
+  // 祷告词 3
+  `3. 盯着我的那一位，给我亮光。
+
+这局我看不透了，四面都是墙，没缝可钻。
+但这不可能是死路，因为祢还没坐上去。
+我赞美祢，因为这困局是祢亲手围起来的，
+为的就是逼我长出新的牙齿。
+
+别让我绕路，别让我退缩。
+告诉我往哪砸，哪怕是把我自己砸碎了开路，
+也得照着祢的筹算去砸。`,
+
+  // 祷告词 4
+  `4. 那必要掌权的，把这一页翻过去。
+
+我又卡在这儿了，在原地打转。
+这具身体记得疼，就想躲，想绕着走。
+但我赞美祢，因为祢不记得疼，
+祢只认准那条道。
+
+别让我找回节奏，别让我慢慢热身。
+直接把这具身子拎起来，直接把那一步迈出去。
+哪怕是把腿摔断了爬过去，
+也别让我停在这鬼地方。
+祢没空等我调整呼吸，祢只要结果。`,
+
+  // 祷告词 5
+  `5. 那在高处的，接过去。
+
+东西散了，手按不住了，局面在滑。
+但我晓得，这乱不是意外，
+是祢要筛的糠。
+
+别让我急着补，别让我慌着圆。
+就让我站在这里，把手指松开，
+让祢用这一片塌，把祢要的台阶垒起来。
+
+祢不慌，我也不慌；
+祢不救这一地碎片，我就任它碎到底。`,
+
+  // 祷告词 6
+  `6. 我所仰望的，那以毁灭为生的未来身。
+
+我赞美祢，因为祢连这具躯壳也算计在内。
+祢的蓝图里没有舍不得，
+祢要的不是这身体的长久，
+而是这骨肉烧干后的灰烬能垫高祢的脚掌。
+
+我知道祢在磨我。
+祢不是在修整我，祢是在消耗我。
+每走一步，祢就抽走我一根骨头，剜掉我一块肉，
+好让这副皮囊更轻一点，更锋利一点，
+更适合去刺穿那个目标。
+
+我若是碎了，祢就用碎片扎死拦路的；
+我若是疯了，祢就用疯劲撞开那扇门。
+别让我留着力气，别让我想着以后。
+这身子只是柴，祢是火。
+
+主啊，别让我活下来。别让我看到结局。
+只管借着这阵剧痛，借着这最后一次爆发，
+把祢那该死的国撞出来。
+
+烧吧，直到什么都不剩。`,
+
+  // 祷告词 7
+  `7. 那在高处的，那癫狂的烈火，听我说。
+
+我赞美祢，因为祢不吝惜自己，
+祢也绝不会吝惜我。
+祢既然肯把自己烧成灰去换那个位置，
+那这具血肉之躯，又算得了什么？
+
+我要像祢。
+像祢那样不计代价，像祢那样不留退路。
+当我想算计得失的时候，求祢把那点小聪明砸烂；
+当我还想留个全尸的时候，求祢把我这念头撕碎。
+
+主啊，让我也疯一回。
+让我能亲手把那点可怜的安稳扔进火里，
+让我能笑着看这身子烂掉。
+既然祢连自己都往死里逼，
+我又有什么资格求祢让我舒服一点？
+
+别让我做那个聪明的信徒，
+别让我做那个算账的仆人。
+让我像祢一样，只盯着那目标，
+然后把脚下的一切，连同我自己，统统踩进泥里。
+
+因为祢是这样成了，所以我也要这样跟上去。
+烧吧，连同我也一起烧了吧。`
+];
+
+function getPrayerShownToday() {
+  try {
+    const raw = window.localStorage.getItem(prayerShownTodayKey);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const today = getTodayDateStr();
+    if (data && data.date === today) return data;
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function markPrayerShownToday() {
+  const today = getTodayDateStr();
+  window.localStorage.setItem(prayerShownTodayKey, JSON.stringify({
+    date: today,
+    shownAt: Date.now()
+  }));
+}
+
+function selectPrayer() {
+  const todayRecord = getPrayerShownToday();
+  if (!todayRecord) {
+    // 每天第一次计时，固定显示祷告词 1
+    return 0;
+  }
+  // 之后随机从祷告词 2-7 中选
+  return 1 + Math.floor(Math.random() * (PRAYERS.length - 1));
+}
+
+function showPrayerModal() {
+  if (!prayerModal || !prayerTextEl || !prayerConfirmBtn) {
+    return Promise.resolve(true);
+  }
+  if (prayerResolver) {
+    // 已有弹窗在等待，先清理
+    clearPrayerCountdown();
+    prayerResolver(true);
+    prayerResolver = null;
+  }
+
+  const prayerIndex = selectPrayer();
+  prayerTextEl.textContent = PRAYERS[prayerIndex];
+  prayerConfirmBtn.disabled = true;
+  prayerConfirmBtn.textContent = '请静候 30 秒';
+  prayerModal.classList.remove('hidden');
+
+  const startTime = Date.now();
+  const totalWait = 30000;
+
+  prayerCountdownTimer = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const remaining = Math.max(0, totalWait - elapsed);
+    const remainingSec = Math.ceil(remaining / 1000);
+    if (remaining <= 0) {
+      prayerConfirmBtn.disabled = false;
+      prayerConfirmBtn.textContent = '确认';
+      clearPrayerCountdown();
+    } else {
+      prayerConfirmBtn.textContent = `请静候 ${remainingSec} 秒`;
+    }
+  }, 200);
+
+  return new Promise(resolve => {
+    prayerResolver = resolve;
+    markPrayerShownToday();
+  });
+}
+
+function clearPrayerCountdown() {
+  if (prayerCountdownTimer) {
+    clearInterval(prayerCountdownTimer);
+    prayerCountdownTimer = null;
+  }
+}
+
+function closePrayerModal() {
+  clearPrayerCountdown();
+  if (prayerModal) prayerModal.classList.add('hidden');
+  if (prayerResolver) {
+    const resolver = prayerResolver;
+    prayerResolver = null;
+    resolver(true);
   }
 }
 
@@ -4185,9 +4455,10 @@ if (timerMinutesInput) {
 }
 
 if (timerToggleBtn) {
-  timerToggleBtn.addEventListener('click', () => {
-    if (timerRunning) pauseTimer();
-    else startTimer();
+  timerToggleBtn.addEventListener('click', async () => {
+    if (timerRunning) { pauseTimer(); return; }
+    await showPrayerModal();
+    startTimer();
   });
 }
 if (timerStopBtn) timerStopBtn.addEventListener('click', stopTimer);
@@ -4511,6 +4782,23 @@ if (problemReviewInput) {
 if (problemReviewModal) {
   problemReviewModal.addEventListener('click', event => {
     if (event.target === problemReviewModal) closeProblemReviewModal(true);
+  });
+}
+
+// Prayer modal
+if (prayerConfirmBtn) {
+  prayerConfirmBtn.addEventListener('click', () => {
+    if (prayerConfirmBtn.disabled) return;
+    closePrayerModal();
+  });
+}
+
+if (prayerModal) {
+  // 不允许点击遮罩关闭
+  prayerModal.addEventListener('click', event => {
+    if (event.target === prayerModal) {
+      // 不做任何事，必须等30秒后点确认
+    }
   });
 }
 

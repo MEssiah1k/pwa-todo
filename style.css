@@ -458,6 +458,48 @@ h2 {
   padding: 20px 18px 18px;
 }
 
+.prayer-card {
+  width: min(520px, 92vw);
+  max-height: min(88vh, 820px);
+  padding: 28px 24px 22px;
+  overflow-y: auto;
+}
+
+.prayer-text {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 2;
+  letter-spacing: 0.02em;
+  margin-bottom: 24px;
+  text-align: left;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.prayer-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.prayer-confirm-btn {
+  opacity: 1;
+  pointer-events: auto;
+  min-width: 140px;
+  padding: 12px 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 16px;
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.prayer-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .assist-custom-body {
   display: flex;
   flex-direction: column;
@@ -1207,10 +1249,12 @@ section {
 #todo-list li:hover .move-btn,
 #todo-list li:hover .progress-btn,
 #todo-list li:hover .queue-btn,
+#todo-list li:hover .todo-sub-btn,
 #todo-list li:focus-within .delete-btn,
 #todo-list li:focus-within .move-btn,
 #todo-list li:focus-within .progress-btn,
 #todo-list li:focus-within .queue-btn,
+#todo-list li:focus-within .todo-sub-btn,
 #completed-list li:hover .delete-btn,
 #completed-list li:hover .move-btn,
 #completed-list li:hover .progress-btn,
@@ -1979,9 +2023,6 @@ section {
 li.is-parent {
   display: block !important;
 }
-li.is-parent .todo-text {
-  font-weight: 600;
-}
 .todo-top-row {
   display: flex;
   align-items: flex-start;
@@ -1992,13 +2033,7 @@ li.is-parent .todo-text {
   align-self: flex-end;
   margin-top: 4px;
 }
-.todo-item.is-child .todo-text {
-  font-size: 13px;
-}
 .todo-item.is-child .todo-main {
-  padding: 3px 0;
-  min-height: 30px;
-}
 .todo-item.is-child .delete-btn,
 .todo-item.is-child .progress-btn,
 .todo-item.is-child .move-btn,
@@ -2015,22 +2050,16 @@ li.is-parent .todo-text {
 .todo-sub-btn {
   opacity: 0;
   pointer-events: none;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--btn);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 13px;
-  transition: opacity 0.12s ease;
+  vertical-align: middle;
 }
-.todo-item:hover .todo-sub-btn {
+#todo-list li:hover .todo-sub-btn,
+#todo-list li:focus-within .todo-sub-btn,
+#completed-list li:hover .todo-sub-btn,
+#completed-list li:focus-within .todo-sub-btn,
+#todo-queue-list li:hover .todo-sub-btn,
+#todo-queue-list li:focus-within .todo-sub-btn {
   opacity: 1;
   pointer-events: auto;
-}
-.todo-sub-btn:hover {
-  color: var(--text);
-  background: var(--input);
 }
 .todo-sub-input-row {
   display: flex;
