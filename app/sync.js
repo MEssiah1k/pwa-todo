@@ -189,6 +189,9 @@ function normalizeRecurrenceWeekdays(weekdays) {
 function getRecurrenceRuleFingerprint(rule) {
   if (!rule) return '';
   const text = typeof rule.text === 'string' ? rule.text.trim() : '';
+  const childrenKey = Array.isArray(rule.children) && rule.children.length
+    ? rule.children.join('|')
+    : '';
   return [
     text,
     rule.type || '',
@@ -196,7 +199,8 @@ function getRecurrenceRuleFingerprint(rule) {
     rule.day ?? '',
     rule.month ?? '',
     rule.interval ?? '',
-    rule.unit ?? ''
+    rule.unit ?? '',
+    childrenKey
   ].join('__');
 }
 
@@ -517,11 +521,9 @@ export async function pushLocalTodos(afterIso = lastSyncAt, upToIso = null) {
 }
 
 export async function pushLocalSummaries(afterIso = lastSyncAt, upToIso = null) {
-  let summaries = upToIso
+  const summaries = upToIso
     ? await getSummariesUpdatedBetween(afterIso, upToIso)
     : await getSummariesUpdatedAfter(afterIso);
-  const recentDates = new Set(getRecentDateStrings(3));
-  summaries = summaries.filter(s => !s.date || recentDates.has(s.date));
   if (DEBUG) console.log('[sync] summaries to push', summaries.length);
   if (!summaries.length) return;
   if (summaries.length) {
@@ -1075,7 +1077,7 @@ export async function pullRemoteChanges() {
     }
   }
 
-  const summaryRows = await fetchRecentRows('summaries');
+  const summaryRows = await fetchAllRows('summaries');
   if (DEBUG) console.log('[sync] pull summaries', summaryRows ? summaryRows.length : 0);
   if (Array.isArray(summaryRows)) {
     for (const row of summaryRows) {
@@ -1109,7 +1111,13 @@ export async function pullRemoteChanges() {
         continue;
       }
       if ((remote.updatedAt || '') > (local.updatedAt || '')) {
-        await updateRecurrenceRule({ ...local, ...remote, id: local.id });
+        const merged = { ...local, ...remote, id: local.id };
+        const localHasChildren = Array.isArray(local.children) && local.children.length;
+        const remoteHasChildren = Array.isArray(merged.children) && merged.children.length;
+        if (!remoteHasChildren && localHasChildren) {
+          merged.children = local.children;
+        }
+        await updateRecurrenceRule(merged);
         if (remote.deletedAt) {
           await syncDeletedRuleTodos(local.id, updatedDates);
         }

@@ -112,7 +112,8 @@ const recurrenceYearDay = document.getElementById('recurrence-year-day');
 const recurrenceInterval = document.getElementById('recurrence-interval');
 const recurrenceUnit = document.getElementById('recurrence-unit');
 const recurrenceAddBtn = document.getElementById('recurrence-add');
-const recurrenceChildrenText = document.getElementById('recurrence-children-text');
+const recurrenceChildrenChips = document.getElementById('recurrence-children-chips');
+const recurrenceChildrenAdd = document.getElementById('recurrence-children-add');
 const recurrenceEditModal = document.getElementById('recurrence-edit-modal');
 const recurrenceEditCloseBtn = document.getElementById('recurrence-edit-close');
 const recurrenceEditCategory = document.getElementById('recurrence-edit-category');
@@ -129,7 +130,8 @@ const recurrenceEditInterval = document.getElementById('recurrence-edit-interval
 const recurrenceEditUnit = document.getElementById('recurrence-edit-unit');
 const recurrenceEditSaveBtn = document.getElementById('recurrence-edit-save');
 const recurrenceEditCancelBtn = document.getElementById('recurrence-edit-cancel');
-const recurrenceEditChildrenText = document.getElementById('recurrence-edit-children-text');
+const recurrenceEditChildrenChips = document.getElementById('recurrence-edit-children-chips');
+const recurrenceEditChildrenAdd = document.getElementById('recurrence-edit-children-add');
 const themeToggleBtn = document.getElementById('theme-toggle');
 
 const timerRemainingEl = document.getElementById('timer-remaining');
@@ -186,6 +188,8 @@ let selectedDate = formatDateLocal(new Date());
 let migrationDone = false;
 let recurrenceRules = [];
 let editingRecurrenceRuleId = null;
+let recurrenceChildren = [];
+let recurrenceEditChildren = [];
 const MAX_IN_PROGRESS_TODOS = 3;
 const IN_PROGRESS_LOCAL_KEY = createScopedStorageKey('pwaTodo.todoInProgress');
 let inProgressTodos = new Map();
@@ -1247,6 +1251,7 @@ function renderTodos() {
   };
 
   queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue', false, getPendingChildren(todo.uuid)));
+  if (todoQueuePanel) todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
   listTodos.forEach(todo => renderTodoItem(todo, list, 'list', false, getPendingChildren(todo.uuid)));
   if (completedList) {
     doneRoots.forEach(todo => renderTodoItem(todo, completedList, 'list', false, getCompletedChildren(todo.uuid)));
@@ -2297,6 +2302,11 @@ window.addEventListener('resize', () => {
 async function loadRecurrenceRules() {
   await dedupeLocalRecurrenceRules();
   recurrenceRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
+  if (typeof console !== 'undefined') {
+    for (const r of recurrenceRules) {
+      if (r.children && r.children.length) console.log('[recurrence] rule', r.id, 'children:', r.children);
+    }
+  }
   renderRecurrenceRules();
 }
 
@@ -2335,6 +2345,9 @@ function resetRecurrenceForm() {
     });
   }
   toggleRecurrenceCustom();
+  recurrenceChildren = [];
+  renderChildrenChips(recurrenceChildren, recurrenceChildrenChips);
+  if (recurrenceChildrenAdd) recurrenceChildrenAdd.value = '';
 }
 
 function resetRecurrenceEditForm() {
@@ -2353,6 +2366,9 @@ function resetRecurrenceEditForm() {
     });
   }
   toggleRecurrenceEditCustom();
+  recurrenceEditChildren = [];
+  renderChildrenChips(recurrenceEditChildren, recurrenceEditChildrenChips);
+  if (recurrenceEditChildrenAdd) recurrenceEditChildrenAdd.value = '';
 }
 
 function fillRecurrenceEditForm(rule) {
@@ -2374,6 +2390,8 @@ function fillRecurrenceEditForm(rule) {
     });
   }
   toggleRecurrenceEditCustom();
+  recurrenceEditChildren = Array.isArray(rule.children) ? rule.children.filter(Boolean) : [];
+  renderChildrenChips(recurrenceEditChildren, recurrenceEditChildrenChips);
 }
 
 function openRecurrenceEditModal(rule) {
@@ -2437,7 +2455,7 @@ function collectRecurrenceFormValue(fields) {
     month,
     interval: type === 'custom' && fields.interval ? Number(fields.interval.value) : null,
     unit: type === 'custom' && fields.unit ? fields.unit.value : null,
-    children: fields.children ? fields.children.value.split('\n').map(c => c.trim()).filter(Boolean) : []
+    children: fields.children || []
   };
 }
 
@@ -2450,6 +2468,21 @@ function renderRecurrenceRules() {
     const text = document.createElement('span');
     text.className = 'recurrence-text';
     text.textContent = `${rule.text} · ${formatRecurrence(rule)}`;
+
+    const info = document.createElement('div');
+    info.className = 'recurrence-info';
+    info.appendChild(text);
+    if (Array.isArray(rule.children) && rule.children.length) {
+      const chips = document.createElement('div');
+      chips.className = 'recurrence-children-preview';
+      for (const childText of rule.children) {
+        const chip = document.createElement('span');
+        chip.className = 'recurrence-child-tag';
+        chip.textContent = childText;
+        chips.appendChild(chip);
+      }
+      info.appendChild(chips);
+    }
 
     const edit = document.createElement('button');
     edit.className = 'edit-btn';
@@ -2488,7 +2521,7 @@ function renderRecurrenceRules() {
     actions.appendChild(edit);
     actions.appendChild(del);
 
-    li.appendChild(text);
+    li.appendChild(info);
     li.appendChild(actions);
     recurrenceList.appendChild(li);
   });
@@ -2674,6 +2707,53 @@ function toggleRecurrenceEditCustom() {
 if (recurrenceType) recurrenceType.addEventListener('change', toggleRecurrenceCustom);
 if (recurrenceEditType) recurrenceEditType.addEventListener('change', toggleRecurrenceEditCustom);
 
+function renderChildrenChips(children, chipsEl) {
+  if (!chipsEl) return;
+  chipsEl.innerHTML = '';
+  children.forEach((text, index) => {
+    const chip = document.createElement('span');
+    chip.className = 'children-chip';
+    const label = document.createElement('span');
+    label.className = 'children-chip-text';
+    label.textContent = text;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'children-chip-remove';
+    removeBtn.textContent = '×';
+    removeBtn.setAttribute('aria-label', `移除子任务 ${text}`);
+    removeBtn.addEventListener('click', () => {
+      children.splice(index, 1);
+      renderChildrenChips(children, chipsEl);
+    });
+    chip.appendChild(label);
+    chip.appendChild(removeBtn);
+    chipsEl.appendChild(chip);
+  });
+}
+
+function setupChildrenAddInput(inputEl, getChildren, chipsEl) {
+  if (!inputEl) return;
+  inputEl.addEventListener('keydown', e => {
+    const children = getChildren();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = inputEl.value.trim();
+      if (!value) return;
+      if (children.includes(value)) { inputEl.value = ''; return; }
+      children.push(value);
+      inputEl.value = '';
+      renderChildrenChips(children, chipsEl);
+    }
+    if (e.key === 'Backspace' && !inputEl.value && children.length) {
+      children.pop();
+      renderChildrenChips(children, chipsEl);
+    }
+  });
+}
+
+setupChildrenAddInput(recurrenceChildrenAdd, () => recurrenceChildren, recurrenceChildrenChips);
+setupChildrenAddInput(recurrenceEditChildrenAdd, () => recurrenceEditChildren, recurrenceEditChildrenChips);
+
 if (recurrenceAddBtn) {
   recurrenceAddBtn.addEventListener('click', async () => {
     const now = new Date().toISOString();
@@ -2687,7 +2767,7 @@ if (recurrenceAddBtn) {
       yearDay: recurrenceYearDay,
       interval: recurrenceInterval,
       unit: recurrenceUnit,
-      children: recurrenceChildrenText
+      children: recurrenceChildren
     });
     if (!rule) {
       setStatus('请完善重复规则内容');
@@ -2700,6 +2780,7 @@ if (recurrenceAddBtn) {
       createdAt: now,
       uuid: generateUUID()
     });
+    console.log('[recurrence] added rule children:', rule.children);
     triggerChangeSync();
     resetRecurrenceForm();
     await loadRecurrenceRules();
@@ -2728,7 +2809,7 @@ if (recurrenceEditSaveBtn) {
       yearDay: recurrenceEditYearDay,
       interval: recurrenceEditInterval,
       unit: recurrenceEditUnit,
-      children: recurrenceEditChildrenText
+      children: recurrenceEditChildren
     });
     if (!rule) {
       setStatus('请完善重复规则内容');
@@ -4948,7 +5029,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260601-bugfix-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260602-chip-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

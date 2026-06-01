@@ -1415,7 +1415,7 @@ section {
 
 #recurrence-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -1444,13 +1444,41 @@ section {
 }
 
 .recurrence-text {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.recurrence-info {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recurrence-children-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.recurrence-child-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+  background: var(--input);
+  white-space: nowrap;
 }
 
 .recurrence-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .modal-divider {
@@ -1529,6 +1557,77 @@ section {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* Children chip input */
+.children-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.children-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.children-chips:empty {
+  display: none;
+}
+.children-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--btn);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.children-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.children-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.children-chip-remove:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+.children-add-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.children-add-input:focus {
+  border-color: var(--todo-active-border);
 }
 
 .recurrence-label {

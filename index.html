@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PWA Todo</title>
-  <link rel="stylesheet" href="style.css?v=20260601-bugfix-3" />
+  <link rel="stylesheet" href="style.css?v=20260602-chip-2" />
   <link rel="icon" type="image/svg+xml" href="app/icon.svg" />
   <link rel="manifest" href="app/manifest.json?v=20260330-problem-review-1" />
 </head>
@@ -202,7 +202,10 @@
             </select>
           </div>
         </div>
-        <textarea id="recurrence-children-text" rows="2" placeholder="子任务（每行一个，可选）" style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input);color:var(--text);font:inherit"></textarea>
+        <div class="children-input" id="recurrence-children-input">
+          <div class="children-chips" id="recurrence-children-chips"></div>
+          <input class="children-add-input" id="recurrence-children-add" type="text" placeholder="输入子任务，回车添加" />
+        </div>
         <div class="recurrence-form-actions">
           <button id="recurrence-add" type="button">新增</button>
         </div>
@@ -274,7 +277,10 @@
             </select>
           </div>
         </div>
-        <textarea id="recurrence-edit-children-text" rows="2" placeholder="子任务（每行一个，可选）" style="width:100%;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--input);color:var(--text);font:inherit"></textarea>
+        <div class="children-input" id="recurrence-edit-children-input">
+          <div class="children-chips" id="recurrence-edit-children-chips"></div>
+          <input class="children-add-input" id="recurrence-edit-children-add" type="text" placeholder="输入子任务，回车添加" />
+        </div>
         <div class="recurrence-form-actions">
           <button id="recurrence-edit-cancel" type="button">取消</button>
           <button id="recurrence-edit-save" type="button">保存</button>
@@ -314,7 +320,7 @@
     <h2>已完成事项</h2>
     <ul id="completed-list"></ul>
   </section>
-  <script type="module" src="app/app.js?v=20260601-bugfix-2"></script>
+  <script type="module" src="app/app.js?v=20260602-chip-2"></script>
   </div>
 
   <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">

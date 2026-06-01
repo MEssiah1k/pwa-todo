@@ -1,10 +1,10 @@
-const CACHE_NAME = 'todo-cache-v69';
+const CACHE_NAME = 'todo-cache-v71';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=20260601-bugfix-3',
-  './app/app.js?v=20260601-bugfix-2',
+  './style.css?v=20260602-chip-2',
+  './app/app.js?v=20260602-chip-2',
   './app/db.js?v=20260328-sync-fix-2',
   './app/sync.js?v=20260601-sync-fix-1',
   './app/storage-scope.js?v=20260328-sync-fix-2',
@@ -12,7 +12,7 @@ const CORE_ASSETS = [
   './app/bgm.js?v=20260328-sync-fix-2',
   './assets/bgm/pinknoise.m4a',
   './app/icon.svg?v=2',
-  './sw.js?v=20260601-sync-fix-1'
+  './sw.js?v=20260602-chip-2'
 ];
 
 self.addEventListener('install', event => {
