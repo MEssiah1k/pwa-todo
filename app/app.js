@@ -33,7 +33,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260331-recurrence-sync-fix-1';
+} from './sync.js?v=20260601-sync-fix-1';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -998,39 +998,50 @@ function renderTodos() {
 
   const showSubTaskInput = (parentTodo, parentLi) => {
     parentLi.classList.add('is-parent');
+    parentLi.classList.add('has-sub-input');
     const existing = parentLi.querySelector('.todo-sub-input-row');
-    if (existing) { existing.remove(); return; }
+    if (existing) { existing.querySelector('input').focus(); return; }
     const row = document.createElement('div');
     row.className = 'todo-sub-input-row';
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = '输入子任务';
-    const btn = document.createElement('button');
-    btn.textContent = '添加';
+    input.placeholder = '输入子任务，回车添加';
     const doAdd = async () => {
       const raw = input.value.trim();
       if (!raw) return;
       const now = new Date().toISOString();
       const userId = currentUserId || ensureUserId();
+      input.value = '';
       await addTodo({
         date: selectedDate, text: raw, completed: false,
         parentId: parentTodo.id, createdAt: now, updatedAt: now, deletedAt: null,
         dueMinutes: null, recurrenceRuleId: null, uuid: generateUUID(), userId
       });
       triggerChangeSync();
-      loadTodos();
+      await loadTodos();
+      const newLi = document.querySelector(`li[data-id="${parentTodo.id}"]`);
+      if (newLi) showSubTaskInput(parentTodo, newLi);
     };
-    btn.onclick = async () => { await doAdd(); };
+    const closeInput = () => {
+      row.remove();
+      parentLi.classList.remove('has-sub-input');
+      document.removeEventListener('click', onDocClick, true);
+    };
+    const onDocClick = e => {
+      if (!parentLi.contains(e.target)) closeInput();
+    };
     input.addEventListener('keydown', async e => {
       if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); await doAdd(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeInput(); }
     });
     input.addEventListener('click', e => { e.stopPropagation(); });
     row.addEventListener('click', e => { e.stopPropagation(); });
-    input.addEventListener('blur', () => { setTimeout(() => row.remove(), 200); });
     row.appendChild(input);
-    row.appendChild(btn);
     parentLi.appendChild(row);
-    setTimeout(() => input.focus(), 50);
+    setTimeout(() => {
+      input.focus();
+      document.addEventListener('click', onDocClick, true);
+    }, 50);
   };
 
   const renderTodoItem = (todo, targetList, group = 'list', isChild = false, children = []) => {
@@ -4062,7 +4073,7 @@ function promptStartRest() {
 async function startDefaultWorkTimer() {
   hideTimerInlinePrompt();
   prepareWorkTimer(DEFAULT_MINUTES);
-  await showPrayerModal();
+  showPrayerModal();
   startTimer();
 }
 
@@ -4455,9 +4466,9 @@ if (timerMinutesInput) {
 }
 
 if (timerToggleBtn) {
-  timerToggleBtn.addEventListener('click', async () => {
+  timerToggleBtn.addEventListener('click', () => {
     if (timerRunning) { pauseTimer(); return; }
-    await showPrayerModal();
+    showPrayerModal();
     startTimer();
   });
 }
@@ -4914,7 +4925,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260331-recurrence-sync-fix-1', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260601-bugfix-2', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

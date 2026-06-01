@@ -482,7 +482,7 @@ h2 {
   align-items: center;
 }
 
-.prayer-confirm-btn {
+#prayer-modal .prayer-confirm-btn {
   opacity: 1;
   pointer-events: auto;
   min-width: 140px;
@@ -494,8 +494,7 @@ h2 {
   font-size: 16px;
   transition: background 0.2s ease, opacity 0.2s ease;
 }
-
-.prayer-confirm-btn:disabled {
+#prayer-modal .prayer-confirm-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -2034,6 +2033,8 @@ li.is-parent {
   margin-top: 4px;
 }
 .todo-item.is-child .todo-main {
+  font-size: 13px;
+}
 .todo-item.is-child .delete-btn,
 .todo-item.is-child .progress-btn,
 .todo-item.is-child .move-btn,
@@ -2050,14 +2051,28 @@ li.is-parent {
 .todo-sub-btn {
   opacity: 0;
   pointer-events: none;
-  vertical-align: middle;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--btn);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.todo-sub-btn:hover {
+  background: var(--input);
+  border-color: color-mix(in srgb, var(--text) 20%, var(--border) 80%);
 }
 #todo-list li:hover .todo-sub-btn,
 #todo-list li:focus-within .todo-sub-btn,
+#todo-list li.has-sub-input .todo-sub-btn,
 #completed-list li:hover .todo-sub-btn,
 #completed-list li:focus-within .todo-sub-btn,
 #todo-queue-list li:hover .todo-sub-btn,
-#todo-queue-list li:focus-within .todo-sub-btn {
+#todo-queue-list li:focus-within .todo-sub-btn,
+#todo-queue-list li.has-sub-input .todo-sub-btn {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2072,20 +2087,30 @@ li.is-parent {
   min-width: 60px;
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--input);
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.todo-sub-input-row input:focus {
+  border-color: var(--todo-active-border);
 }
 .todo-sub-input-row button {
   flex-shrink: 0;
-  padding: 6px 10px;
+  padding: 6px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--btn);
   color: var(--text);
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.todo-sub-input-row button:hover {
+  background: var(--input);
+  border-color: color-mix(in srgb, var(--text) 20%, var(--border) 80%);
 }
 .todo-children {
   flex-basis: 100%;
