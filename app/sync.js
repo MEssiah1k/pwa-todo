@@ -112,7 +112,8 @@ function mapTodoToRemote(todo) {
     created_at: todo.createdAt,
     updated_at: todo.updatedAt,
     deleted_at: todo.deletedAt,
-    parent_id: todo.parentId ?? null
+    parent_id: todo.parentId ?? null,
+    parent_uuid: todo.parentUuid ?? null
   };
 }
 
@@ -137,7 +138,8 @@ function mapTodoFromRemote(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at || null,
-    parentId: row.parent_id ?? null
+    parentId: row.parent_id ?? null,
+    parentUuid: row.parent_uuid ?? null
   };
 }
 
@@ -171,8 +173,7 @@ function mapRecurrenceRuleFromRemote(row) {
     children: Array.isArray(row.children) ? row.children : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at || null,
-    parentId: row.parent_id ?? null
+    deletedAt: row.deleted_at || null
   };
 }
 
@@ -260,8 +261,7 @@ function mapSummaryFromRemote(row) {
     rating: row.rating ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    deletedAt: row.deleted_at || null,
-    parentId: row.parent_id ?? null
+    deletedAt: row.deleted_at || null
   };
 }
 
@@ -344,13 +344,13 @@ export async function initSync({ onStatus, onUpdate } = {}) {
   if (DEBUG) console.log('[sync] lastSyncAt', lastSyncAt);
 
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    setStatus('Sync disabled', 'missing config');
+    setStatus('同步未启用', '缺少配置');
     return { userId };
   }
 
   supabase = await getSupabase();
   if (!supabase) {
-    setStatus('Sync disabled', 'sdk unavailable');
+    setStatus('同步未启用', 'SDK 不可用');
     return { userId };
   }
   await normalizeLocalData();
@@ -363,7 +363,7 @@ export async function syncNow() {
   try {
     const syncCutoff = new Date().toISOString();
     const previousSyncAt = lastSyncAt;
-    setStatus('Syncing');
+    setStatus('同步中');
 
     // pull first, then push local updates (git-like flow)
     if (DEBUG) console.log('[sync] pull first');
@@ -390,11 +390,11 @@ export async function syncNow() {
     queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('Idle', `last ${lastSyncAt}`);
+    setStatus('空闲', `上次 ${lastSyncAt}`);
     updateHandler(updatedDates);
   } catch (err) {
     if (DEBUG) console.log('[sync] error', err);
-    setStatus('Error');
+    setStatus('同步出错');
   }
 }
 
@@ -403,7 +403,7 @@ export async function pushNow() {
   try {
     const syncCutoff = new Date().toISOString();
     const previousSyncAt = lastSyncAt;
-    setStatus('Syncing', 'push only');
+    setStatus('同步中', '仅推送');
     await normalizeLocalData();
     if (DEBUG) console.log('[sync] push-only todos');
     await pushLocalTodos(previousSyncAt, syncCutoff);
@@ -420,17 +420,17 @@ export async function pushNow() {
 
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('Idle', `last ${lastSyncAt}`);
+    setStatus('空闲', `上次 ${lastSyncAt}`);
   } catch (err) {
     if (DEBUG) console.log('[sync] push-only error', err);
-    setStatus('Error');
+    setStatus('同步出错');
   }
 }
 
 export async function pullNow() {
   if (!supabase) return;
   try {
-    setStatus('Syncing', 'pull only');
+    setStatus('同步中', '仅拉取');
     const updatedDates = await pullRemoteChanges();
     const dedupedAfterPull = await dedupeLocalTodosByNameAndStatus();
     const workPunchUpdatedDates = await syncWorkPunchRecords();
@@ -440,18 +440,18 @@ export async function pullNow() {
     queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('Idle', `last ${lastSyncAt}`);
+    setStatus('空闲', `上次 ${lastSyncAt}`);
     updateHandler(updatedDates);
   } catch (err) {
     if (DEBUG) console.log('[sync] pull-only error', err);
-    setStatus('Error');
+    setStatus('同步出错');
   }
 }
 
 export async function syncAllLocalToCloud() {
   if (!supabase) return;
   try {
-    setStatus('Syncing', 'full push');
+    setStatus('同步中', '全量推送');
     await normalizeLocalData();
     const fullSyncUpdatedAt = new Date().toISOString();
     if (DEBUG) console.log('[sync] dedupe local todos before full push');
@@ -492,18 +492,20 @@ export async function syncAllLocalToCloud() {
 
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('Idle', `last ${lastSyncAt}`);
+    setStatus('空闲', `上次 ${lastSyncAt}`);
     updateHandler(dedupedBeforePush);
   } catch (err) {
     if (DEBUG) console.log('[sync] full push error', err);
-    setStatus('Error');
+    setStatus('同步出错');
   }
 }
 
 export async function pushLocalTodos(afterIso = lastSyncAt, upToIso = null) {
-  const todos = upToIso
+  let todos = upToIso
     ? await getTodosUpdatedBetween(afterIso, upToIso)
     : await getTodosUpdatedAfter(afterIso);
+  const recentDates = new Set(getRecentDateStrings(3));
+  todos = todos.filter(t => !t.date || recentDates.has(t.date));
   if (DEBUG) console.log('[sync] todos to push', todos.length);
   if (!todos.length) return;
   const dedupedTodos = dedupeTodosForPush(todos);
@@ -515,9 +517,11 @@ export async function pushLocalTodos(afterIso = lastSyncAt, upToIso = null) {
 }
 
 export async function pushLocalSummaries(afterIso = lastSyncAt, upToIso = null) {
-  const summaries = upToIso
+  let summaries = upToIso
     ? await getSummariesUpdatedBetween(afterIso, upToIso)
     : await getSummariesUpdatedAfter(afterIso);
+  const recentDates = new Set(getRecentDateStrings(3));
+  summaries = summaries.filter(s => !s.date || recentDates.has(s.date));
   if (DEBUG) console.log('[sync] summaries to push', summaries.length);
   if (!summaries.length) return;
   if (summaries.length) {
@@ -1044,7 +1048,7 @@ export async function pullRemoteChanges() {
     }
   }
 
-  const todoRows = await fetchAllRows('todos');
+  const todoRows = await fetchRecentRows('todos');
   if (DEBUG) console.log('[sync] pull todos', todoRows ? todoRows.length : 0);
   if (Array.isArray(todoRows)) {
     for (const row of todoRows) {
@@ -1071,7 +1075,7 @@ export async function pullRemoteChanges() {
     }
   }
 
-  const summaryRows = await fetchAllRows('summaries');
+  const summaryRows = await fetchRecentRows('summaries');
   if (DEBUG) console.log('[sync] pull summaries', summaryRows ? summaryRows.length : 0);
   if (Array.isArray(summaryRows)) {
     for (const row of summaryRows) {
@@ -1171,6 +1175,35 @@ async function applyRemoteTimerTimeline(rows, updatedDates) {
   }
 }
 
+async function fetchRecentRows(table, dateColumn = 'date') {
+  const dates = getRecentDateStrings(3);
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .in(dateColumn, dates)
+    .order('updated_at', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+function getRecentDateStrings(days) {
+  const result = [];
+  const now = new Date();
+  for (let i = -1; i < days - 1; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    result.push(formatDateLocalFromJS(d));
+  }
+  return result;
+}
+
+function formatDateLocalFromJS(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 async function fetchAllRows(table) {
   const { data, error } = await fetchAllRowsWithError(table);
   if (error) throw error;
@@ -1241,6 +1274,9 @@ function mergeTodoForPull(local, remote) {
   if (merged.parentId == null && local.parentId != null) {
     merged.parentId = local.parentId;
   }
+  if (merged.parentUuid == null && local.parentUuid != null) {
+    merged.parentUuid = local.parentUuid;
+  }
 
   // 冲突时“已完成”优先于“未完成”
   const completedMerged = Boolean(local.completed) || Boolean(remote.completed);
@@ -1265,6 +1301,7 @@ function shouldUpdateTodo(local, next) {
     (local.queueOrder ?? null) !== (next.queueOrder ?? null) ||
     (local.sortOrder ?? null) !== (next.sortOrder ?? null) ||
     (local.parentId ?? null) !== (next.parentId ?? null) ||
+    (local.parentUuid ?? null) !== (next.parentUuid ?? null) ||
     (local.userId ?? null) !== (next.userId ?? null) ||
     (local.createdAt || '') !== (next.createdAt || '') ||
     (local.updatedAt || '') !== (next.updatedAt || '') ||
@@ -1277,11 +1314,13 @@ async function dedupeLocalTodosByNameAndStatus() {
   const groups = new Map();
   const updatedDates = new Set();
   const now = new Date().toISOString();
+  const recentDates = new Set(getRecentDateStrings(3));
   const activeTodos = todos.filter(
     todo =>
       todo &&
       !todo.deletedAt &&
       todo.date &&
+      recentDates.has(todo.date) &&
       typeof todo.text === 'string' &&
       todo.text.trim()
   );
@@ -1307,7 +1346,7 @@ async function dedupeLocalTodosByNameAndStatus() {
         activeCount: activeTodos.length
       });
     }
-    setStatus('Sync warning', 'skip bulk dedupe');
+    setStatus('同步警告', '跳过批量去重');
     return updatedDates;
   }
 

@@ -1160,6 +1160,7 @@ section {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .move-btn,
@@ -2027,6 +2028,7 @@ li.is-parent {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
 }
 .todo-item.is-parent .todo-actions {
   align-self: flex-end;
@@ -2036,11 +2038,9 @@ li.is-parent {
   font-size: 13px;
 }
 .todo-item.is-child .delete-btn,
-.todo-item.is-child .progress-btn,
-.todo-item.is-child .move-btn,
-.todo-item.is-child .queue-btn {
-  padding: 2px 6px;
-  font-size: 11px;
+.todo-item.is-child .progress-btn {
+  padding: 4px 8px;
+  font-size: 12px;
 }
 .todo-progress {
   font-size: 11px;

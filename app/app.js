@@ -752,6 +752,27 @@ async function migrateMissingTodoDates() {
   if (missingDateTodos.length) triggerChangeSync();
 }
 
+let parentUuidMigrationDone = false;
+async function migrateParentIdToParentUuid() {
+  if (parentUuidMigrationDone) return;
+  parentUuidMigrationDone = true;
+  const all = await getAllTodos();
+  const byId = new Map();
+  for (const t of all) byId.set(t.id, t);
+  const toMigrate = all.filter(t => t.parentId != null && !t.parentUuid);
+  if (!toMigrate.length) return;
+  const now = new Date().toISOString();
+  await Promise.all(toMigrate.map(todo => {
+    const parent = byId.get(todo.parentId);
+    return updateTodo({
+      ...todo,
+      parentUuid: parent ? parent.uuid : null,
+      updatedAt: now
+    });
+  }));
+  triggerChangeSync();
+}
+
 function normalizeTodoName(text) {
   return typeof text === 'string' ? text.trim() : '';
 }
@@ -820,6 +841,7 @@ async function dedupeTodosForDate(date) {
 async function loadTodos() {
   if (restoreInProgressPromise) await restoreInProgressPromise;
   await migrateMissingTodoDates();
+  await migrateParentIdToParentUuid();
   await dedupeTodosForDate(selectedDate);
   await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
@@ -867,7 +889,8 @@ async function carryOverIncomplete(fromDate, toDate) {
     const userId = currentUserId ||
       (syncInitPromise ? (await syncInitPromise).userId : ensureUserId());
     const allFromTodos = await getTodosByDate(fromDate);
-    const children = allFromTodos.filter(t => !t.deletedAt && t.parentId === todo.id);
+    const children = allFromTodos.filter(t => !t.deletedAt && t.parentUuid === todo.uuid);
+    const newParentUuid = generateUUID();
     const newParentId = await addTodo({
       date: toDate,
       text: todo.text,
@@ -880,7 +903,7 @@ async function carryOverIncomplete(fromDate, toDate) {
       dueMinutes: todo.dueMinutes ?? null,
       recurrenceRuleId: null,
       carriedFrom: todo.uuid,
-      uuid: generateUUID(),
+      uuid: newParentUuid,
       userId
     });
     hasChanges = true;
@@ -891,7 +914,7 @@ async function carryOverIncomplete(fromDate, toDate) {
         queued: false, queueOrder: null,
         createdAt: now, updatedAt: now, deletedAt: null,
         dueMinutes: child.dueMinutes ?? null, recurrenceRuleId: null,
-        parentId: newParentId, uuid: generateUUID(), userId
+        parentUuid: newParentUuid, uuid: generateUUID(), userId
       });
       hasChanges = true;
     }
@@ -930,7 +953,7 @@ async function moveTodoToTomorrow(todo) {
   // Move children too
   const allToday = await getTodosByDate(sourceDate);
   for (const child of allToday) {
-    if (!child.deletedAt && child.parentId === todo.id) {
+    if (!child.deletedAt && child.parentUuid === todo.uuid) {
       await updateTodo({ ...child, date: tomorrowDate, updatedAt: now });
       await clearTodoInProgress(child.uuid);
     }
@@ -950,27 +973,27 @@ function renderTodos() {
   const childrenByParent = new Map();
   const rootTodos = [];
   for (const t of activeTodos) {
-    if (t.parentId != null) {
-      const arr = childrenByParent.get(t.parentId) || [];
+    if (t.parentUuid != null) {
+      const arr = childrenByParent.get(t.parentUuid) || [];
       arr.push(t);
-      childrenByParent.set(t.parentId, arr);
+      childrenByParent.set(t.parentUuid, arr);
     } else {
       rootTodos.push(t);
     }
   }
 
-  const hasPendingChildren = parentId =>
-    (childrenByParent.get(parentId) || []).some(c => !c.deletedAt && !c.completed);
-  const hasCompletedChildren = parentId =>
-    (childrenByParent.get(parentId) || []).some(c => !c.deletedAt && c.completed);
-  const getPendingChildren = parentId =>
-    (childrenByParent.get(parentId) || []).filter(c => !c.deletedAt && !c.completed)
+  const hasPendingChildren = parentUuid =>
+    (childrenByParent.get(parentUuid) || []).some(c => !c.deletedAt && !c.completed);
+  const hasCompletedChildren = parentUuid =>
+    (childrenByParent.get(parentUuid) || []).some(c => !c.deletedAt && c.completed);
+  const getPendingChildren = parentUuid =>
+    (childrenByParent.get(parentUuid) || []).filter(c => !c.deletedAt && !c.completed)
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
-  const getCompletedChildren = parentId =>
-    (childrenByParent.get(parentId) || []).filter(c => !c.deletedAt && c.completed)
+  const getCompletedChildren = parentUuid =>
+    (childrenByParent.get(parentUuid) || []).filter(c => !c.deletedAt && c.completed)
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
-  const getAllChildren = parentId =>
-    (childrenByParent.get(parentId) || [])
+  const getAllChildren = parentUuid =>
+    (childrenByParent.get(parentUuid) || [])
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
   const countProgress = items => {
     let total = 0, done = 0;
@@ -985,15 +1008,15 @@ function renderTodos() {
 
   // Pending: root tasks that are incomplete themselves OR have incomplete children
   const pendingRoots = rootTodos.filter(t =>
-    !t.completed || hasPendingChildren(t.id)
+    !t.completed || hasPendingChildren(t.uuid)
   ).sort(comparePendingTodos);
 
   const queuedTodos = pendingRoots.filter(t => isTodoQueued(t)).sort(compareQueuedTodos);
   const listTodos = pendingRoots.filter(t => !isTodoQueued(t) && matchesSelectedCategory(t)).sort(comparePendingTodos);
 
-  // Done: root tasks that are completed themselves OR have completed children  
+  // Done: root tasks that are completed themselves OR have completed children
   const doneRoots = rootTodos.filter(t =>
-    t.completed || hasCompletedChildren(t.id)
+    t.completed || hasCompletedChildren(t.uuid)
   ).sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0));
 
   const showSubTaskInput = (parentTodo, parentLi) => {
@@ -1014,7 +1037,7 @@ function renderTodos() {
       input.value = '';
       await addTodo({
         date: selectedDate, text: raw, completed: false,
-        parentId: parentTodo.id, createdAt: now, updatedAt: now, deletedAt: null,
+        parentUuid: parentTodo.uuid, createdAt: now, updatedAt: now, deletedAt: null,
         dueMinutes: null, recurrenceRuleId: null, uuid: generateUUID(), userId
       });
       triggerChangeSync();
@@ -1125,32 +1148,36 @@ function renderTodos() {
       actions.appendChild(subBtn);
     }
 
-    const queueBtn = document.createElement('button');
-    queueBtn.className = 'queue-btn';
-    queueBtn.type = 'button';
-    queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
-    queueBtn.onclick = async event => {
-      event.stopPropagation();
-      const now = new Date().toISOString();
-      if (isTodoQueued(todo)) {
-        await updateTodo({ ...todo, queued: false, queueOrder: null, sortOrder: getNextPendingSortOrder(), updatedAt: now });
-      } else {
-        await updateTodo({ ...todo, queued: true, queueOrder: getNextQueuedSortOrder(), updatedAt: now });
-      }
-      triggerChangeSync(); loadTodos();
-    };
-    if (!todo.completed) actions.appendChild(queueBtn);
+    if (!isChild && !todo.completed) {
+      const queueBtn = document.createElement('button');
+      queueBtn.className = 'queue-btn';
+      queueBtn.type = 'button';
+      queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
+      queueBtn.onclick = async event => {
+        event.stopPropagation();
+        const now = new Date().toISOString();
+        if (isTodoQueued(todo)) {
+          await updateTodo({ ...todo, queued: false, queueOrder: null, sortOrder: getNextPendingSortOrder(), updatedAt: now });
+        } else {
+          await updateTodo({ ...todo, queued: true, queueOrder: getNextQueuedSortOrder(), updatedAt: now });
+        }
+        triggerChangeSync(); loadTodos();
+      };
+      actions.appendChild(queueBtn);
+    }
 
-    const moveBtn = document.createElement('button');
-    moveBtn.className = 'move-btn';
-    moveBtn.type = 'button';
-    moveBtn.textContent = '移至明天';
-    moveBtn.onclick = async event => {
-      event.stopPropagation();
-      const changed = await moveTodoToTomorrow(todo);
-      if (changed) loadTodos();
-    };
-    actions.appendChild(moveBtn);
+    if (!isChild) {
+      const moveBtn = document.createElement('button');
+      moveBtn.className = 'move-btn';
+      moveBtn.type = 'button';
+      moveBtn.textContent = '移至明天';
+      moveBtn.onclick = async event => {
+        event.stopPropagation();
+        const changed = await moveTodoToTomorrow(todo);
+        if (changed) loadTodos();
+      };
+      actions.appendChild(moveBtn);
+    }
 
     const progressBtn = document.createElement('button');
     progressBtn.className = 'progress-btn';
@@ -1158,7 +1185,7 @@ function renderTodos() {
     progressBtn.textContent = isTodoInProgress(todo) ? '停止' : '进行';
     progressBtn.onclick = async event => {
       event.stopPropagation();
-      const target = children.length > 0 ? (getPendingChildren(todo.id)[0] || children[0]) : todo;
+      const target = children.length > 0 ? (getPendingChildren(todo.uuid)[0] || children[0]) : todo;
       const changed = await toggleTodoInProgress(target);
       if (changed) loadTodos();
     };
@@ -1171,7 +1198,7 @@ function renderTodos() {
     del.onclick = async event => {
       event.stopPropagation();
       const now = new Date().toISOString();
-      const toDelete = [todo, ...getAllChildren(todo.id)];
+      const toDelete = [todo, ...getAllChildren(todo.uuid)];
       for (const t of toDelete) {
         await updateTodo({ ...t, deletedAt: now, updatedAt: now });
         if (t.recurrenceRuleId != null) await addRecurrenceSkip(t.date, Number(t.recurrenceRuleId));
@@ -1219,10 +1246,10 @@ function renderTodos() {
     targetList.appendChild(li);
   };
 
-  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue', false, getPendingChildren(todo.id)));
-  listTodos.forEach(todo => renderTodoItem(todo, list, 'list', false, getPendingChildren(todo.id)));
+  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue', false, getPendingChildren(todo.uuid)));
+  listTodos.forEach(todo => renderTodoItem(todo, list, 'list', false, getPendingChildren(todo.uuid)));
   if (completedList) {
-    doneRoots.forEach(todo => renderTodoItem(todo, completedList, 'list', false, getCompletedChildren(todo.id)));
+    doneRoots.forEach(todo => renderTodoItem(todo, completedList, 'list', false, getCompletedChildren(todo.uuid)));
   }
   if (completedModule) {
     completedModule.classList.toggle('hidden', doneRoots.length === 0);
@@ -2573,6 +2600,7 @@ async function ensureRecurrenceForDate(dateStr) {
     const initResult = syncInitPromise ? await syncInitPromise : null;
     const userId = currentUserId ||
       (initResult && initResult.userId ? initResult.userId : ensureUserId());
+    const parentUuid = generateUUID();
     await addTodo({
       date: dateStr,
       text: rule.text,
@@ -2582,32 +2610,27 @@ async function ensureRecurrenceForDate(dateStr) {
       deletedAt: null,
       dueMinutes: null,
       recurrenceRuleId: rule.id,
-      uuid: generateUUID(),
+      uuid: parentUuid,
       userId
     });
     // Generate child tasks from rule template
     if (Array.isArray(rule.children) && rule.children.length) {
-      const parentId = (await getTodosByDate(dateStr))
-        .filter(t => t.recurrenceRuleId === rule.id && !t.deletedAt)
-        .sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''))[0]?.id;
-      if (parentId) {
-        const parsed = parseCategorizedText(rule.text);
-        for (const childText of rule.children) {
-          if (!childText) continue;
-          await addTodo({
-            date: dateStr,
-            text: formatTodoText(parsed.category, childText),
-            completed: false,
-            parentId,
-            createdAt: now,
-            updatedAt: now,
-            deletedAt: null,
-            dueMinutes: null,
-            recurrenceRuleId: null,
-            uuid: generateUUID(),
-            userId
-          });
-        }
+      const parsed = parseCategorizedText(rule.text);
+      for (const childText of rule.children) {
+        if (!childText) continue;
+        await addTodo({
+          date: dateStr,
+          text: formatTodoText(parsed.category, childText),
+          completed: false,
+          parentUuid,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+          dueMinutes: null,
+          recurrenceRuleId: null,
+          uuid: generateUUID(),
+          userId
+        });
       }
     }
     if (ruleText) normalizedNames.add(ruleText);
@@ -4591,8 +4614,8 @@ if (bgmFileInput) {
 
 function setSyncStatus(text) {
   if (!syncStatus) return;
-  if (text.startsWith('Idle · last ')) {
-    const iso = text.replace('Idle · last ', '');
+  if (text.startsWith('空闲 · 上次 ')) {
+    const iso = text.replace('空闲 · 上次 ', '');
     const date = new Date(iso);
     if (!Number.isNaN(date.getTime())) {
       const local = new Date(date.getTime() + 8 * 60 * 60 * 1000);
