@@ -45,3 +45,9 @@ global-hotkey = "0.6"
 
 # Window management
 winit = "0.30"
+
+# File dialogs
+rfd = "0.15"
+
+# Directory paths
+dirs = "6"
