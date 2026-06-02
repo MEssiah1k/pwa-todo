@@ -62,8 +62,10 @@ pub enum Message {
 
 impl Default for TodoApp {
     fn default() -> Self {
-        let db = Database::open_in_memory()
-            .expect("Failed to open database");
+        let db_path = platform::db_path();
+        let db = Database::open(&db_path)
+            .unwrap_or_else(|_| Database::open_in_memory()
+                .expect("Failed to open database"));
 
         let settings = db.get_settings()
             .unwrap_or_default();
