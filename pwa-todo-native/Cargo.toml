@@ -34,3 +34,14 @@ reqwest = { version = "0.12", features = ["json"] }
 # Logging
 log = "0.4"
 env_logger = "0.11"
+
+# Audio playback
+rodio = "0.20"
+
+# System integration
+tray-icon = { version = "0.20", default-features = false, features = [] }
+notify-rust = "4"
+global-hotkey = "0.6"
+
+# Window management
+winit = "0.30"
