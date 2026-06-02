@@ -8,9 +8,11 @@ mod platform;
 
 use db::Database;
 use db::models::*;
+use system::{FocusTimer, TimerState, TimerEvent, AssistTimer, AssistTimerState};
 
-use iced::widget::{button, column, row, text, text_input, Column};
-use iced::{application, Element, Length, Theme};
+use iced::widget::{button, column, row, text, text_input, Column, Space};
+use iced::{application, Element, Length, Subscription, Task, Theme};
+use iced::time::every;
 
 /// Main application state
 pub struct TodoApp {
@@ -19,11 +21,21 @@ pub struct TodoApp {
     todos: Vec<Todo>,
     new_task_text: String,
     settings: AppSettings,
+    focus_timer: FocusTimer,
+    assist_timer: AssistTimer,
+    active_tab: ActiveTab,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActiveTab {
+    Tasks,
+    Timer,
 }
 
 /// User interface messages
 #[derive(Debug, Clone)]
 pub enum Message {
+    // Task messages
     NewTaskChanged(String),
     AddTask,
     ToggleComplete(String),
@@ -31,6 +43,21 @@ pub enum Message {
     PreviousDay,
     NextDay,
     GoToToday,
+    // Tab navigation
+    SwitchTab(ActiveTab),
+    // Focus timer messages
+    StartFocus,
+    PauseFocus,
+    ResumeFocus,
+    StopFocus,
+    StartRest,
+    // Assist timer messages
+    AssistStart(u64),
+    AssistPause,
+    AssistResume,
+    AssistStop,
+    // Timer tick
+    TimerTick,
 }
 
 impl Default for TodoApp {
@@ -50,20 +77,24 @@ impl Default for TodoApp {
             current_date,
             todos,
             new_task_text: String::new(),
+            focus_timer: FocusTimer::new(settings.focus_duration_minutes, settings.rest_duration_minutes),
             settings,
+            assist_timer: AssistTimer::new(5),
+            active_tab: ActiveTab::Tasks,
         }
     }
 }
 
-fn update(app: &mut TodoApp, message: Message) {
+fn update(app: &mut TodoApp, message: Message) -> Task<Message> {
     match message {
+        // ── Task messages ────────────────────────────────────
         Message::NewTaskChanged(value) => {
             app.new_task_text = value;
         }
         Message::AddTask => {
             let task_text = app.new_task_text.trim().to_string();
             if task_text.is_empty() {
-                return;
+                return Task::none();
             }
             let now = chrono::Utc::now().to_rfc3339();
             let todo = Todo {
@@ -103,7 +134,7 @@ fn update(app: &mut TodoApp, message: Message) {
             let now = chrono::Utc::now().to_rfc3339();
             let _ = app.db.delete_todo(&uuid, &now);
             app.todos = app.db.get_todos_by_date(&app.current_date)
-                .unwrap_or_default();
+                    .unwrap_or_default();
         }
         Message::PreviousDay => {
             if let Ok(d) = chrono::NaiveDate::parse_from_str(&app.current_date, "%Y-%m-%d") {
@@ -126,10 +157,63 @@ fn update(app: &mut TodoApp, message: Message) {
             app.todos = app.db.get_todos_by_date(&app.current_date)
                 .unwrap_or_default();
         }
+        // ── Tab navigation ───────────────────────────────────
+        Message::SwitchTab(tab) => {
+            app.active_tab = tab;
+        }
+        // ── Focus timer messages ─────────────────────────────
+        Message::StartFocus => {
+            app.focus_timer.start_focus();
+        }
+        Message::PauseFocus => {
+            app.focus_timer.pause();
+        }
+        Message::ResumeFocus => {
+            app.focus_timer.resume();
+        }
+        Message::StopFocus => {
+            app.focus_timer.stop();
+        }
+        Message::StartRest => {
+            app.focus_timer.start_rest();
+        }
+        // ── Assist timer messages ────────────────────────────
+        Message::AssistStart(mins) => {
+            app.assist_timer.set_duration(mins);
+            app.assist_timer.start();
+        }
+        Message::AssistPause => {
+            app.assist_timer.pause();
+        }
+        Message::AssistResume => {
+            app.assist_timer.resume();
+        }
+        Message::AssistStop => {
+            app.assist_timer.stop();
+        }
+        // ── Timer tick ───────────────────────────────────────
+        Message::TimerTick => {
+            let _event = app.focus_timer.tick();
+            let _completed = app.assist_timer.tick();
+        }
+    }
+    Task::none()
+}
+
+fn view(app: &TodoApp) -> Element<'_, Message> {
+    match app.active_tab {
+        ActiveTab::Tasks => view_tasks(app).into(),
+        ActiveTab::Timer => view_timer(app).into(),
     }
 }
 
-fn view(app: &TodoApp) -> Column<'_, Message> {
+fn view_tasks(app: &TodoApp) -> Column<'_, Message> {
+    let tabs = row![
+        button("Tasks").on_press(Message::SwitchTab(ActiveTab::Tasks)),
+        button("Timer").on_press(Message::SwitchTab(ActiveTab::Timer)),
+    ]
+    .spacing(8);
+
     let date_display = text(&app.current_date).size(20);
 
     let nav = row![
@@ -170,9 +254,145 @@ fn view(app: &TodoApp) -> Column<'_, Message> {
         }).into()
     };
 
-    column![nav, input_row, todo_list]
+    column![tabs, nav, input_row, todo_list]
         .spacing(16)
         .padding(20)
+}
+
+fn view_timer(app: &TodoApp) -> Column<'_, Message> {
+    let tabs = row![
+        button("Tasks").on_press(Message::SwitchTab(ActiveTab::Tasks)),
+        button("Timer").on_press(Message::SwitchTab(ActiveTab::Timer)),
+    ]
+    .spacing(8);
+
+    let progress = app.focus_timer.progress();
+    let remaining = app.focus_timer.format_remaining();
+
+    let state_label = match app.focus_timer.state {
+        TimerState::Idle => "Ready",
+        TimerState::Focusing => "Focusing",
+        TimerState::FocusPaused => "Paused",
+        TimerState::Resting => "Resting",
+        TimerState::RestPaused => "Rest Paused",
+    };
+
+    let timer_display = column![
+        text(state_label).size(16),
+        text(remaining).size(40),
+    ]
+    .spacing(8)
+    .align_x(iced::Alignment::Center);
+
+    let controls: Element<Message> = match app.focus_timer.state {
+        TimerState::Idle => {
+            row![button("Start Focus").on_press(Message::StartFocus)]
+                .spacing(8)
+                .into()
+        }
+        TimerState::Focusing => {
+            row![
+                button("Pause").on_press(Message::PauseFocus),
+                button("Stop").on_press(Message::StopFocus),
+            ]
+            .spacing(8)
+            .into()
+        }
+        TimerState::FocusPaused => {
+            row![
+                button("Resume").on_press(Message::ResumeFocus),
+                button("Stop").on_press(Message::StopFocus),
+            ]
+            .spacing(8)
+            .into()
+        }
+        TimerState::Resting => {
+            row![
+                button("Pause").on_press(Message::PauseFocus),
+                button("Stop").on_press(Message::StopFocus),
+            ]
+            .spacing(8)
+            .into()
+        }
+        TimerState::RestPaused => {
+            row![
+                button("Resume").on_press(Message::ResumeFocus),
+                button("Stop").on_press(Message::StopFocus),
+            ]
+            .spacing(8)
+            .into()
+        }
+    };
+
+    // Assist timer section
+    let assist_progress = app.assist_timer.progress();
+    let assist_remaining = app.assist_timer.format_remaining();
+
+    let assist_display = column![
+        text("Assist Timer").size(14),
+        text(assist_remaining).size(24),
+    ]
+    .spacing(4)
+    .align_x(iced::Alignment::Center);
+
+    let assist_controls: Element<Message> = match app.assist_timer.state {
+        AssistTimerState::Idle | AssistTimerState::Completed => {
+            row![
+                button("2m").on_press(Message::AssistStart(2)),
+                button("5m").on_press(Message::AssistStart(5)),
+                button("10m").on_press(Message::AssistStart(10)),
+                button("15m").on_press(Message::AssistStart(15)),
+                button("20m").on_press(Message::AssistStart(20)),
+            ]
+            .spacing(4)
+            .into()
+        }
+        AssistTimerState::Running => {
+            row![
+                button("Pause").on_press(Message::AssistPause),
+                button("Stop").on_press(Message::AssistStop),
+            ]
+            .spacing(4)
+            .into()
+        }
+        AssistTimerState::Paused => {
+            row![
+                button("Resume").on_press(Message::AssistResume),
+                button("Stop").on_press(Message::AssistStop),
+            ]
+            .spacing(4)
+            .into()
+        }
+    };
+
+    let assist_section = column![
+        assist_display,
+        assist_controls,
+    ]
+    .spacing(8)
+    .align_x(iced::Alignment::Center);
+
+    column![
+        tabs,
+        timer_display,
+        controls,
+        Space::new().height(Length::Fixed(20.0)),
+        assist_section,
+    ]
+    .spacing(16)
+    .padding(20)
+    .align_x(iced::Alignment::Center)
+}
+
+fn subscription(app: &TodoApp) -> Subscription<Message> {
+    match (app.focus_timer.state, app.assist_timer.state) {
+        (TimerState::Idle, AssistTimerState::Idle | AssistTimerState::Completed) => {
+            Subscription::none()
+        }
+        _ => {
+            every(std::time::Duration::from_secs(1)).map(|_| Message::TimerTick)
+        }
+    }
 }
 
 fn app_theme(app: &TodoApp) -> Theme {
@@ -187,6 +407,7 @@ fn main() -> iced::Result {
     application(TodoApp::default, update, view)
         .title("Todo")
         .theme(app_theme)
+        .subscription(subscription)
         .window_size(iced::Size::new(680.0, 600.0))
         .centered()
         .run()
