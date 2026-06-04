@@ -88,20 +88,44 @@ PWA Todo 是一个功能丰富的离线优先待办事项应用，基于 PWA（P
 
 ```
 pwa-todo/
-├── index.html                          # 主入口页面
+├── index.html                          # PWA 主入口页面
 ├── style.css                           # 全局样式（含深色/浅色主题变量）
 ├── sw.js                               # Service Worker 离线缓存
 ├── supabase_timer_timeline.sql         # Supabase 数据库建表 SQL
-├── app/
+├── app/                                # PWA 网页版
 │   ├── app.js                          # 主应用逻辑（约 3700 行）
 │   ├── db.js                           # IndexedDB 封装（CRUD 操作）
 │   ├── sync.js                         # Supabase 云端同步逻辑
 │   ├── bgm.js                          # BGM 背景音乐播放管理
+│   ├── storage-scope.js                # 存储作用域（多实例隔离）
 │   ├── manifest.json                   # PWA 清单文件
 │   └── icon.svg                        # PWA 图标
-└── assets/
-    └── bgm/
-        └── pinknoise.m4a               # 内置白噪音音频
+├── assets/
+│   └── bgm/
+│       └── pinknoise.m4a               # 内置白噪音音频
+└── native/                             # Rust 原生桌面版
+    ├── Cargo.toml                      # Rust 项目配置
+    ├── src/
+    │   ├── main.rs                     # 应用入口
+    │   ├── db/                         # SQLite 数据层
+    │   │   ├── mod.rs                  # 模块导出
+    │   │   ├── database.rs             # SQLite CRUD + 迁移
+    │   │   ├── models.rs               # 数据模型（Todo, Summary, RecurrenceRule 等）
+    │   │   ├── recurrence.rs           # 重复规则引擎
+    │   │   ├── summary.rs              # 每日总结辅助
+    │   │   └── filesystem.rs           # 备份/导出/导入（JSON + CSV）
+    │   ├── system/                     # 系统集成
+    │   │   ├── mod.rs                  # 模块导出
+    │   │   ├── timer.rs                # 专注计时器 + 辅助计时器
+    │   │   ├── tray.rs                 # 系统托盘
+    │   │   ├── notifications.rs        # 桌面通知
+    │   │   └── hotkeys.rs              # 全局快捷键
+    │   ├── audio/                      # 音频服务（闹钟/提示音）
+    │   ├── platform/                   # 平台路径（数据目录）
+    │   ├── sync/                       # 云端同步（规划中）
+    │   ├── view/                       # UI 视图（开发中）
+    │   └── widget/                     # 自定义组件（开发中）
+    └── migrations/                     # 数据库迁移脚本（预留）
 ```
 
 ## 架构设计

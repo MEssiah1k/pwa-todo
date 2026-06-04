@@ -4320,7 +4320,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwa-todo-native"
+name = "pwa-todo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
