@@ -1,4 +1,4 @@
-const CACHE_NAME = 'todo-cache-v71';
+const CACHE_NAME = 'todo-cache-v72';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',

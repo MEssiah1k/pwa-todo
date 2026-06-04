@@ -1,0 +1,103 @@
+name: Web CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'index.html'
+      - 'style.css'
+      - 'sw.js'
+      - 'app/**'
+      - '.github/workflows/web-ci.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'index.html'
+      - 'style.css'
+      - 'sw.js'
+      - 'app/**'
+      - '.github/workflows/web-ci.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate HTML
+        run: npx -y html-validate index.html
+
+      - name: Validate CSS
+        run: npx -y stylelint style.css
+
+      - name: Check JS syntax
+        run: |
+          node --check app/app.js
+          node --check app/db.js
+          node --check app/sync.js
+          node --check app/bgm.js
+          node --check app/storage-scope.js
+          node --check sw.js
+
+      - name: Validate manifest.json
+        run: |
+          node -e "
+            const m = JSON.parse(require('fs').readFileSync('app/manifest.json','utf8'));
+            const required = ['name','short_name','start_url','display','icons'];
+            const missing = required.filter(k => !m[k]);
+            if (missing.length) { console.error('Missing fields:', missing); process.exit(1); }
+            if (!Array.isArray(m.icons) || m.icons.length === 0) { console.error('No icons'); process.exit(1); }
+            m.icons.forEach((ic,i) => {
+              if (!ic.src || !ic.sizes) console.warn('Icon ' + i + ' missing src/sizes');
+            });
+            console.log('manifest.json OK');
+          "
+
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Lighthouse CI
+        run: |
+          npx -y @lhci/cli@0.14.x autorun \
+            --collect.url="http://localhost:8080/" \
+            --collect.startServerCommand="python3 -m http.server 8080" \
+            --collect.numberOfRuns=1 \
+            --assert.assertions.manifest-exists=error \
+            --assert.assertions.service-worker=error \
+            --assert.assertions.viewport=error \
+            --assert.assertions.document-title=error \
+            --upload.target=temporary-public-storage
+
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            native/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run Rust tests
+        working-directory: native
+        run: cargo test --verbose

@@ -1797,6 +1797,18 @@ section {
     -webkit-overflow-scrolling: touch;
   }
 
+  .todo-top-row {
+    flex-wrap: wrap;
+  }
+
+  .todo-main {
+    flex-wrap: wrap;
+  }
+
+  .todo-due {
+    white-space: normal;
+  }
+
   .date-sync-group,
   .todo-actions,
   .recurrence-actions {
@@ -1814,6 +1826,71 @@ section {
   .recurrence-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+
+  /* Show action buttons on mobile (no hover on touch) */
+  #todo-queue-list li .delete-btn,
+  #todo-queue-list li .move-btn,
+  #todo-queue-list li .progress-btn,
+  #todo-queue-list li .queue-btn,
+  #todo-queue-list li .todo-sub-btn,
+  #todo-list li .delete-btn,
+  #todo-list li .move-btn,
+  #todo-list li .progress-btn,
+  #todo-list li .queue-btn,
+  #todo-list li .todo-sub-btn,
+  #completed-list li .delete-btn,
+  #completed-list li .move-btn,
+  #completed-list li .progress-btn,
+  #recurrence-list li .delete-btn,
+  #recurrence-list li .edit-btn {
+    opacity: 0.45;
+    pointer-events: auto;
+  }
+
+  .todo-due {
+    margin-left: 0;
+  }
+
+  .todo-category-row {
+    flex-wrap: wrap;
+  }
+
+  #todo-category {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .todo-filter-row {
+    flex-wrap: wrap;
+  }
+
+  #todo-filter-category {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .todo-filter-nav-btn {
+    min-width: 64px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .input-row {
+    flex-wrap: wrap;
+  }
+
+  .todo-children {
+    padding-left: 10px;
+  }
+
+  .todo-sub-input-row {
+    padding-left: 10px;
+  }
+
+  .todo-side-btn {
+    flex: 1 1 auto;
   }
 
   .assist-timer-header {
