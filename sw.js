@@ -1,4 +1,4 @@
-const CACHE_NAME = 'todo-cache-v72';
+const CACHE_NAME = 'todo-cache-v73';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',
@@ -12,7 +12,7 @@ const CORE_ASSETS = [
   './app/bgm.js?v=20260328-sync-fix-2',
   './assets/bgm/pinknoise.m4a',
   './app/icon.svg?v=2',
-  './sw.js?v=20260602-chip-2'
+  './sw.js?v=20260605-cache-fix-1'
 ];
 
 self.addEventListener('install', event => {
@@ -22,7 +22,9 @@ self.addEventListener('install', event => {
       // Force network revalidation during install so a new worker does not
       // seed its cache from stale HTTP cache entries.
       await Promise.all(
-        CORE_ASSETS.map(url => cache.add(new Request(url, { cache: 'reload' })))
+        CORE_ASSETS.map(url =>
+          cache.add(new Request(url, { cache: 'reload' })).catch(() => {})
+        )
       );
       const clients = await self.clients.matchAll({ type: 'window' });
       if (self.registration.active && clients.length) {
