@@ -1060,7 +1060,8 @@ export async function pullRemoteChanges() {
       const local = byUuid || byFingerprint;
 
       if (!local) {
-        await addTodo(remote);
+        const newId = await addTodo(remote);
+        remote.id = newId;
         if (remote.uuid) localByUuid.set(remote.uuid, remote);
         localByFingerprint.set(getTodoFingerprint(remote), remote);
         updatedDates.add(remote.date);
