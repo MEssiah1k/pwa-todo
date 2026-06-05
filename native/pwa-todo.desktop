@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Todo
+Comment=Offline-first todo app with focus timer
+Exec=pwa-todo
+Icon=pwa-todo
+Terminal=false
+Type=Application
+Categories=Utility;Office;
+Keywords=todo;task;timer;focus;

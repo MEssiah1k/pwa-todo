@@ -51,3 +51,20 @@ rfd = "0.15"
 
 # Directory paths
 dirs = "6"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+opt-level = "s"
+
+[package.metadata.deb]
+name = "pwa-todo"
+depends = "libgtk-3-0, libglib2.0-0, libpango-1.0-0, libcairo2, libgdk-pixbuf2.0-0, libatk1.0-0, libasound2, libssl3"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/pwa-todo", "usr/bin/", "755"],
+    ["../app/icon.svg", "usr/share/icons/hicolor/scalable/apps/pwa-todo.svg", "644"],
+    ["pwa-todo.desktop", "usr/share/applications/", "644"],
+]
