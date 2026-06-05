@@ -1035,13 +1035,14 @@ export async function pullRemoteChanges() {
   const localByFingerprint = new Map();
 
   for (const todo of localTodos) {
-    if (todo && todo.uuid) {
+    if (!todo || todo.deletedAt) continue;
+    if (todo.uuid) {
       const existing = localByUuid.get(todo.uuid);
       if (!existing || (todo.updatedAt || '') > (existing.updatedAt || '')) {
         localByUuid.set(todo.uuid, todo);
       }
     }
-    if (todo) {
+    {
       const key = getTodoFingerprint(todo);
       const existingByKey = localByFingerprint.get(key);
       if (!existingByKey || (todo.updatedAt || '') > (existingByKey.updatedAt || '')) {
@@ -1060,6 +1061,21 @@ export async function pullRemoteChanges() {
       const local = byUuid || byFingerprint;
 
       if (!local) {
+        // Fallback: check all local todos for same date+text to avoid duplicate
+        const localTodo = localTodos.find(t =>
+          t && !t.deletedAt && t.date === remote.date &&
+          typeof t.text === 'string' && t.text.trim() === (typeof remote.text === 'string' ? remote.text.trim() : '')
+        );
+        if (localTodo) {
+          const merged = mergeTodoForPull(localTodo, remote);
+          if (shouldUpdateTodo(localTodo, merged)) {
+            await updateTodo({ ...localTodo, ...merged, id: localTodo.id });
+            if (merged.uuid) localByUuid.set(merged.uuid, { ...localTodo, ...merged });
+            localByFingerprint.set(getTodoFingerprint(merged), { ...localTodo, ...merged });
+          }
+          updatedDates.add(remote.date);
+          continue;
+        }
         const newId = await addTodo(remote);
         remote.id = newId;
         if (remote.uuid) localByUuid.set(remote.uuid, remote);
@@ -1243,8 +1259,7 @@ async function fetchAllRowsWithError(table) {
 function getTodoFingerprint(todo) {
   const date = todo && todo.date ? todo.date : '';
   const text = todo && typeof todo.text === 'string' ? todo.text.trim() : '';
-  const createdAt = todo && todo.createdAt ? todo.createdAt : '';
-  return `${date}__${text}__${createdAt}`;
+  return `${date}__${text}`;
 }
 
 function mergeTodoForPull(local, remote) {
