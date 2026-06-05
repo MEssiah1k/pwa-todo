@@ -19,11 +19,9 @@ self.addEventListener('install', event => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      // Force network revalidation during install so a new worker does not
-      // seed its cache from stale HTTP cache entries.
       await Promise.all(
         CORE_ASSETS.map(url =>
-          cache.add(new Request(url, { cache: 'reload' })).catch(() => {})
+          cache.add(url).catch(() => {})
         )
       );
       const clients = await self.clients.matchAll({ type: 'window' });
@@ -64,47 +62,35 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      (async () => {
-        const cache = await caches.open(CACHE_NAME);
-        try {
-          const networkResponse = await fetch(event.request, { cache: 'no-store' });
-          if (networkResponse && networkResponse.ok && networkResponse.status === 200) {
-            await cache.put(event.request, networkResponse.clone());
-          }
-          return networkResponse;
-        } catch (err) {
-          const cached = await cache.match(event.request);
-          if (cached) return cached;
-          return cache.match('./index.html');
-        }
-      })()
-    );
-    return;
-  }
-
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
       const cached = await cache.match(event.request);
-      const networkPromise = fetch(event.request)
-        .then(async response => {
-          if (response && response.ok && response.status === 200) {
-            await cache.put(event.request, response.clone());
-          }
-          return response;
-        })
-        .catch(() => null);
-
       if (cached) {
-        void networkPromise;
+        // Background update — don't await, serve cache immediately
+        fetch(event.request)
+          .then(response => {
+            if (response && response.ok && response.status === 200) {
+              cache.put(event.request, response.clone());
+            }
+          })
+          .catch(() => {});
         return cached;
       }
-
-      const networkResponse = await networkPromise;
-      if (networkResponse) return networkResponse;
-      return caches.match(event.request);
+      // Not cached — try network, then fall back to index.html for navigations
+      try {
+        const networkResponse = await fetch(event.request);
+        if (networkResponse && networkResponse.ok && networkResponse.status === 200) {
+          cache.put(event.request, networkResponse.clone());
+        }
+        return networkResponse;
+      } catch (err) {
+        if (event.request.mode === 'navigate') {
+          const fallback = await cache.match('./index.html');
+          if (fallback) return fallback;
+        }
+        return new Response('Network error', { status: 503, statusText: 'Service Unavailable' });
+      }
     })()
   );
 });
