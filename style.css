@@ -853,6 +853,7 @@ section {
 
 
 #todo-category,
+#todo-quadrant,
 #todo-filter-category,
 #todo-input {
   width: 100%;
@@ -871,6 +872,11 @@ section {
 #todo-category {
   width: 110px;
   flex: 0 0 110px;
+}
+
+#todo-quadrant {
+  width: 150px;
+  flex: 0 0 150px;
 }
 
 #todo-filter-category {
@@ -1020,6 +1026,179 @@ section {
 
 #status:empty {
   display: none;
+}
+
+.local-storage-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, #22c55e 52%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #22c55e 12%, var(--input));
+  color: color-mix(in srgb, #22c55e 70%, var(--text));
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.quadrant-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.quadrant {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--quadrant-color);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--quadrant-color) 6%, var(--input));
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.quadrant-q1 { --quadrant-color: #ef4444; }
+.quadrant-q2 { --quadrant-color: #3b82f6; }
+.quadrant-q3 { --quadrant-color: #f59e0b; }
+.quadrant-q4 { --quadrant-color: #64748b; }
+
+.quadrant-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.quadrant-header h3,
+.quadrant-header p {
+  margin: 0;
+}
+
+.quadrant-header h3 {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.quadrant-header p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.quadrant-count {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--quadrant-color) 18%, var(--input));
+  color: var(--quadrant-color);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quadrant-list {
+  min-height: 82px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px dashed transparent;
+  border-radius: 9px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.quadrant.is-empty .quadrant-list::after {
+  content: '拖拽任务到这里';
+  display: grid;
+  place-items: center;
+  min-height: 80px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quadrant.is-drag-over {
+  border-color: var(--quadrant-color);
+  background: color-mix(in srgb, var(--quadrant-color) 15%, var(--input));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--quadrant-color) 24%, transparent);
+}
+
+.quadrant.is-drag-over .quadrant-list {
+  border-color: color-mix(in srgb, var(--quadrant-color) 65%, transparent);
+  background: color-mix(in srgb, var(--quadrant-color) 8%, transparent);
+}
+
+.quadrant-list > li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  gap: 12px;
+  background: var(--todo);
+}
+
+.quadrant-list > li:last-child {
+  margin-bottom: 0;
+}
+
+.quadrant-list > li > .todo-top-row {
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.quadrant-list > li > .todo-top-row > .todo-content {
+  width: 100%;
+  flex-basis: 100%;
+}
+
+.quadrant-list > li > .todo-top-row > .todo-actions {
+  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.quadrant-list > li[draggable="true"] { cursor: grab; }
+.quadrant-list > li.todo-dragging { opacity: 0.45; cursor: grabbing; }
+.quadrant-list > li.todo-drop-before { border-top: 3px solid var(--quadrant-color); }
+.quadrant-list > li.todo-drop-after { border-bottom: 3px solid var(--quadrant-color); }
+.quadrant-list > li.in-progress {
+  background: var(--todo-active);
+  border-color: var(--todo-active-border);
+  box-shadow: 0 0 0 2px var(--todo-active-glow);
+}
+
+.quadrant-list > li.is-pinned {
+  border-left: 4px solid var(--quadrant-color);
+  background: color-mix(in srgb, var(--quadrant-color) 10%, var(--todo));
+}
+
+.todo-category-badge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.todo-pin-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #eab308 24%, transparent);
+  color: #facc15;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 #todo-queue-panel {
@@ -1255,6 +1434,16 @@ section {
 #todo-list li:focus-within .progress-btn,
 #todo-list li:focus-within .queue-btn,
 #todo-list li:focus-within .todo-sub-btn,
+.quadrant-list li:hover .delete-btn,
+.quadrant-list li:hover .move-btn,
+.quadrant-list li:hover .progress-btn,
+.quadrant-list li:hover .queue-btn,
+.quadrant-list li:hover .todo-sub-btn,
+.quadrant-list li:focus-within .delete-btn,
+.quadrant-list li:focus-within .move-btn,
+.quadrant-list li:focus-within .progress-btn,
+.quadrant-list li:focus-within .queue-btn,
+.quadrant-list li:focus-within .todo-sub-btn,
 #completed-list li:hover .delete-btn,
 #completed-list li:hover .move-btn,
 #completed-list li:hover .progress-btn,
@@ -1493,8 +1682,10 @@ section {
 }
 
 #recurrence-category,
+#recurrence-quadrant,
 #recurrence-text,
 #recurrence-edit-category,
+#recurrence-edit-quadrant,
 #recurrence-edit-text {
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -1706,6 +1897,26 @@ section {
   .page-card {
     border-radius: 14px;
     padding: 16px 12px 20px;
+  }
+
+  .todo-category-row {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  #todo-category,
+  #todo-quadrant {
+    flex: 1 1 calc(50% - 4px);
+    width: auto;
+  }
+
+  .todo-intention-note {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .quadrant-board {
+    grid-template-columns: 1fr;
   }
 
   .theme-toggle,
@@ -2212,6 +2423,7 @@ li.is-parent {
 }
 .todo-item.is-child .todo-main {
   font-size: 13px;
+  padding-left: 6px;
 }
 .todo-item.is-child .delete-btn,
 .todo-item.is-child .progress-btn {
@@ -2249,6 +2461,11 @@ li.is-parent {
 #todo-queue-list li:hover .todo-sub-btn,
 #todo-queue-list li:focus-within .todo-sub-btn,
 #todo-queue-list li.has-sub-input .todo-sub-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.quadrant-list li:hover .todo-sub-btn,
+.quadrant-list li:focus-within .todo-sub-btn {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2294,6 +2511,10 @@ li.is-parent {
   padding-left: 16px;
   border-left: 2px solid var(--border);
   margin: 4px 0 0 4px;
+}
+.todo-children > li {
+  padding: 7px 0 7px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
 }
 .todo-icon {
   color: var(--muted);

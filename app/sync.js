@@ -34,6 +34,8 @@ let userId = null;
 let lastSyncAt = '1970-01-01T00:00:00.000Z';
 let statusHandler = () => {};
 let updateHandler = () => {};
+let todoQuadrantColumnsAvailable = true;
+let recurrenceQuadrantColumnAvailable = true;
 
 const TIMER_TIMELINE_META_KEY = 'timerTimelineByDate';
 const TIMER_TIMELINE_ACTIVE_META_KEY = 'timerTimelineActive';
@@ -103,6 +105,14 @@ function setStatus(state, detail = '') {
   if (DEBUG) console.log('[sync][status]', state, detail);
 }
 
+function setIdleStatus() {
+  if (!todoQuadrantColumnsAvailable || !recurrenceQuadrantColumnAvailable) {
+    setStatus('同步警告', '请执行四象限迁移');
+    return;
+  }
+  setStatus('空闲', `上次 ${lastSyncAt}`);
+}
+
 function mapTodoToRemote(todo) {
   return {
     uuid: todo.uuid,
@@ -113,7 +123,9 @@ function mapTodoToRemote(todo) {
     updated_at: todo.updatedAt,
     deleted_at: todo.deletedAt,
     parent_id: todo.parentId ?? null,
-    parent_uuid: todo.parentUuid ?? null
+    parent_uuid: todo.parentUuid ?? null,
+    quadrant: ['q1', 'q2', 'q3', 'q4'].includes(todo.quadrant) ? todo.quadrant : 'q1',
+    quadrant_order: Number.isFinite(todo.quadrantOrder) ? todo.quadrantOrder : null
   };
 }
 
@@ -130,7 +142,7 @@ function mapSummaryToRemote(summary) {
 }
 
 function mapTodoFromRemote(row) {
-  return {
+  const todo = {
     uuid: row.uuid,
     date: row.date,
     text: row.text,
@@ -141,6 +153,35 @@ function mapTodoFromRemote(row) {
     parentId: row.parent_id ?? null,
     parentUuid: row.parent_uuid ?? null
   };
+  if (Object.prototype.hasOwnProperty.call(row, 'quadrant')) {
+    todo.quadrant = ['q1', 'q2', 'q3', 'q4'].includes(row.quadrant) ? row.quadrant : 'q1';
+  }
+  if (Object.prototype.hasOwnProperty.call(row, 'quadrant_order')) {
+    todo.quadrantOrder = Number.isFinite(row.quadrant_order) ? row.quadrant_order : null;
+  }
+  return todo;
+}
+
+function isMissingTodoQuadrantColumnError(error) {
+  const message = `${error && error.code ? error.code : ''} ${error && error.message ? error.message : ''}`.toLowerCase();
+  return (
+    (message.includes('quadrant') || message.includes('quadrant_order')) &&
+    (message.includes('column') || message.includes('schema cache') || message.includes('pgrst204'))
+  );
+}
+
+async function upsertTodoPayload(payload) {
+  let outgoing = payload;
+  if (!todoQuadrantColumnsAvailable) {
+    outgoing = payload.map(({ quadrant, quadrant_order, ...todo }) => todo);
+  }
+  let { error } = await supabase.from('todos').upsert(outgoing, { onConflict: 'uuid' });
+  if (!error || !todoQuadrantColumnsAvailable || !isMissingTodoQuadrantColumnError(error)) return error;
+
+  todoQuadrantColumnsAvailable = false;
+  const legacyPayload = payload.map(({ quadrant, quadrant_order, ...todo }) => todo);
+  ({ error } = await supabase.from('todos').upsert(legacyPayload, { onConflict: 'uuid' }));
+  return error;
 }
 
 function mapRecurrenceRuleToRemote(rule) {
@@ -154,6 +195,7 @@ function mapRecurrenceRuleToRemote(rule) {
     interval: rule.interval ?? null,
     unit: rule.unit ?? null,
     children: Array.isArray(rule.children) ? rule.children : null,
+    quadrant: ['q1', 'q2', 'q3', 'q4'].includes(rule.quadrant) ? rule.quadrant : 'q1',
     created_at: rule.createdAt,
     updated_at: rule.updatedAt,
     deleted_at: rule.deletedAt ?? null
@@ -161,7 +203,7 @@ function mapRecurrenceRuleToRemote(rule) {
 }
 
 function mapRecurrenceRuleFromRemote(row) {
-  return {
+  const rule = {
     uuid: row.uuid,
     text: row.text,
     type: row.type,
@@ -175,6 +217,32 @@ function mapRecurrenceRuleFromRemote(row) {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at || null
   };
+  if (Object.prototype.hasOwnProperty.call(row, 'quadrant')) {
+    rule.quadrant = ['q1', 'q2', 'q3', 'q4'].includes(row.quadrant) ? row.quadrant : 'q1';
+  }
+  return rule;
+}
+
+function isMissingRecurrenceQuadrantColumnError(error) {
+  const message = `${error && error.code ? error.code : ''} ${error && error.message ? error.message : ''}`.toLowerCase();
+  return message.includes('quadrant') &&
+    (message.includes('column') || message.includes('schema cache') || message.includes('pgrst204'));
+}
+
+async function upsertRecurrenceRulePayload(payload) {
+  let outgoing = payload;
+  if (!recurrenceQuadrantColumnAvailable) {
+    outgoing = payload.map(({ quadrant, ...rule }) => rule);
+  }
+  let { error } = await supabase.from('recurrence_rules').upsert(outgoing, { onConflict: 'uuid' });
+  if (!error || !recurrenceQuadrantColumnAvailable || !isMissingRecurrenceQuadrantColumnError(error)) {
+    return error;
+  }
+
+  recurrenceQuadrantColumnAvailable = false;
+  const legacyPayload = payload.map(({ quadrant, ...rule }) => rule);
+  ({ error } = await supabase.from('recurrence_rules').upsert(legacyPayload, { onConflict: 'uuid' }));
+  return error;
 }
 
 function normalizeRecurrenceWeekdays(weekdays) {
@@ -200,7 +268,8 @@ function getRecurrenceRuleFingerprint(rule) {
     rule.month ?? '',
     rule.interval ?? '',
     rule.unit ?? '',
-    childrenKey
+    childrenKey,
+    ['q1', 'q2', 'q3', 'q4'].includes(rule.quadrant) ? rule.quadrant : 'q1'
   ].join('__');
 }
 
@@ -236,7 +305,8 @@ function pickPreferredRecurrenceRules(rules) {
 
 export async function dedupeLocalRecurrenceRules() {
   const rules = await getAllRecurrenceRules();
-  const preferredByFingerprint = pickPreferredRecurrenceRules(rules);
+  // Tombstones from an earlier dedupe must not delete the surviving rule.
+  const preferredByFingerprint = pickPreferredRecurrenceRules(rules.filter(rule => !rule.deletedAt));
   const now = new Date().toISOString();
   let changed = false;
 
@@ -380,8 +450,8 @@ export async function syncNow() {
     await pushLocalTodos(previousSyncAt, syncCutoff);
     if (DEBUG) console.log('[sync] push summaries');
     await pushLocalSummaries(previousSyncAt, syncCutoff);
-    if (DEBUG) console.log('[sync] overwrite recurrence rules (local -> cloud)');
-    await overwriteRemoteRecurrenceRulesFromLocal();
+    if (DEBUG) console.log('[sync] sync recurrence rules with tombstones');
+    await syncRecurrenceRulesWithCloud(null, false);
     if (DEBUG) console.log('[sync] push timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
     if (DEBUG) console.log('[sync] sync work punch');
@@ -394,7 +464,7 @@ export async function syncNow() {
     queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('空闲', `上次 ${lastSyncAt}`);
+    setIdleStatus();
     updateHandler(updatedDates);
   } catch (err) {
     if (DEBUG) console.log('[sync] error', err);
@@ -414,7 +484,7 @@ export async function pushNow() {
     if (DEBUG) console.log('[sync] push-only summaries');
     await pushLocalSummaries(previousSyncAt, syncCutoff);
     if (DEBUG) console.log('[sync] push-only recurrence rules');
-    await overwriteRemoteRecurrenceRulesFromLocal();
+    await syncRecurrenceRulesWithCloud();
     if (DEBUG) console.log('[sync] push-only timer timeline');
     await pushLocalTimerTimeline(previousSyncAt, syncCutoff);
     if (DEBUG) console.log('[sync] push-only work punch');
@@ -424,7 +494,7 @@ export async function pushNow() {
 
     lastSyncAt = syncCutoff;
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('空闲', `上次 ${lastSyncAt}`);
+    setIdleStatus();
   } catch (err) {
     if (DEBUG) console.log('[sync] push-only error', err);
     setStatus('同步出错');
@@ -444,7 +514,7 @@ export async function pullNow() {
     queueUpdatedDates.forEach(date => updatedDates.add(date));
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('空闲', `上次 ${lastSyncAt}`);
+    setIdleStatus();
     updateHandler(updatedDates);
   } catch (err) {
     if (DEBUG) console.log('[sync] pull-only error', err);
@@ -460,6 +530,9 @@ export async function syncAllLocalToCloud() {
     const fullSyncUpdatedAt = new Date().toISOString();
     if (DEBUG) console.log('[sync] dedupe local todos before full push');
     const dedupedBeforePush = await dedupeLocalTodosByNameAndStatus();
+    // Apply rule tombstones before collecting todos so rule-linked future todo
+    // deletions are included in this same full upload.
+    await pullRemoteRecurrenceRules(dedupedBeforePush);
     const allTodos = await getAllTodos();
     const dedupedTodos = dedupeTodosForPush(allTodos);
     if (DEBUG) console.log('[sync] full todos to push', dedupedTodos.length);
@@ -467,9 +540,7 @@ export async function syncAllLocalToCloud() {
       const todoPayload = dedupedTodos.map(todo =>
         mapTodoToRemote({ ...todo, updatedAt: fullSyncUpdatedAt })
       );
-      const { error: todoError } = await supabase
-        .from('todos')
-        .upsert(todoPayload, { onConflict: 'uuid' });
+      const todoError = await upsertTodoPayload(todoPayload);
       if (todoError) throw todoError;
     }
 
@@ -485,8 +556,8 @@ export async function syncAllLocalToCloud() {
       if (summaryError) throw summaryError;
     }
 
-    if (DEBUG) console.log('[sync] overwrite recurrence rules (local -> cloud)');
-    await overwriteRemoteRecurrenceRulesFromLocal(fullSyncUpdatedAt);
+    if (DEBUG) console.log('[sync] sync recurrence rules with tombstones');
+    await syncRecurrenceRulesWithCloud(fullSyncUpdatedAt, false);
     if (DEBUG) console.log('[sync] full push timer timeline');
     await pushLocalTimerTimeline('1970-01-01T00:00:00.000Z', fullSyncUpdatedAt, true);
     if (DEBUG) console.log('[sync] full push work punch');
@@ -496,7 +567,7 @@ export async function syncAllLocalToCloud() {
 
     lastSyncAt = new Date().toISOString();
     await setMeta('lastSyncAt', lastSyncAt);
-    setStatus('空闲', `上次 ${lastSyncAt}`);
+    setIdleStatus();
     updateHandler(dedupedBeforePush);
   } catch (err) {
     if (DEBUG) console.log('[sync] full push error', err);
@@ -516,7 +587,7 @@ export async function pushLocalTodos(afterIso = lastSyncAt, upToIso = null) {
   if (DEBUG) console.log('[sync] todos to push after uuid dedupe', dedupedTodos.length);
   if (!dedupedTodos.length) return;
   const payload = dedupedTodos.map(mapTodoToRemote);
-  const { error } = await supabase.from('todos').upsert(payload, { onConflict: 'uuid' });
+  const error = await upsertTodoPayload(payload);
   if (error) throw error;
 }
 
@@ -540,9 +611,7 @@ export async function pushLocalRecurrenceRules(afterIso = lastSyncAt, upToIso = 
   if (DEBUG) console.log('[sync] recurrence rules to push', rules.length);
   if (!rules.length) return;
   const payload = rules.map(mapRecurrenceRuleToRemote);
-  const { error } = await supabase
-    .from('recurrence_rules')
-    .upsert(payload, { onConflict: 'uuid' });
+  const error = await upsertRecurrenceRulePayload(payload);
   if (error) {
     if (isMissingRecurrenceTable(error)) return;
     throw error;
@@ -945,15 +1014,14 @@ function compareTimerTimelineSegment(a, b) {
   return String(a && a.id ? a.id : '').localeCompare(String(b && b.id ? b.id : ''));
 }
 
-async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
+async function syncRecurrenceRulesWithCloud(forcedUpdatedAt = null, pullFirst = true) {
   await normalizeLocalData();
+  // Merge before uploading even for push-only operations: a stale device must
+  // not overwrite a cloud tombstone with an active copy of the same UUID.
+  if (pullFirst) await pullRemoteRecurrenceRules(new Set());
   await dedupeLocalRecurrenceRules();
   const localRules = await getAllRecurrenceRules();
-  const preferredByFingerprint = pickPreferredRecurrenceRules(localRules);
-  const effectiveLocalRules = Array.from(preferredByFingerprint.values());
-  const localUuids = effectiveLocalRules
-    .map(rule => rule && rule.uuid)
-    .filter(Boolean);
+  const effectiveLocalRules = localRules;
 
   if (DEBUG) console.log('[sync] local recurrence rules', effectiveLocalRules.length);
   if (effectiveLocalRules.length) {
@@ -962,50 +1030,15 @@ async function overwriteRemoteRecurrenceRulesFromLocal(forcedUpdatedAt = null) {
         forcedUpdatedAt ? { ...rule, updatedAt: forcedUpdatedAt } : rule
       )
     );
-    const { error: upsertError } = await supabase
-      .from('recurrence_rules')
-      .upsert(payload, { onConflict: 'uuid' });
+    const upsertError = await upsertRecurrenceRulePayload(payload);
     if (upsertError) {
       if (isMissingRecurrenceTable(upsertError)) return;
       throw upsertError;
     }
   }
 
-  const { data: remoteRows, error: remoteListError } = await supabase
-    .from('recurrence_rules')
-    .select('uuid, text, type, weekdays, day, month, interval, unit, created_at, updated_at, deleted_at');
-  if (remoteListError) {
-    if (isMissingRecurrenceTable(remoteListError)) return;
-    throw remoteListError;
-  }
-
-  const localUuidSet = new Set(localUuids);
-  const remoteOnlyUuids = (remoteRows || [])
-    .map(row => mapRecurrenceRuleFromRemote(row))
-    .filter(rule => {
-      if (!rule || !rule.uuid) return false;
-      const fingerprint = getRecurrenceRuleFingerprint(rule);
-      const preferred = fingerprint ? preferredByFingerprint.get(fingerprint) : null;
-      if (preferred && preferred.uuid !== rule.uuid) return true;
-      return !localUuidSet.has(rule.uuid);
-    })
-    .map(rule => rule.uuid);
-
-  if (!remoteOnlyUuids.length) return;
-  if (DEBUG) console.log('[sync] delete remote-only recurrence rules', remoteOnlyUuids.length);
-
-  const CHUNK_SIZE = 200;
-  for (let i = 0; i < remoteOnlyUuids.length; i += CHUNK_SIZE) {
-    const chunk = remoteOnlyUuids.slice(i, i + CHUNK_SIZE);
-    const { error: deleteError } = await supabase
-      .from('recurrence_rules')
-      .delete()
-      .in('uuid', chunk);
-    if (deleteError) {
-      if (isMissingRecurrenceTable(deleteError)) return;
-      throw deleteError;
-    }
-  }
+  // Keep every UUID, including deleted duplicates, so offline devices can
+  // receive the deletion later. Absence alone is not evidence of deletion.
 }
 
 async function syncDeletedRuleTodos(ruleId, updatedDates) {
@@ -1112,36 +1145,7 @@ export async function pullRemoteChanges() {
     }
   }
 
-  const { data: ruleRows, error: rulePullError } = await fetchAllRowsWithError('recurrence_rules');
-  if (rulePullError) {
-    if (!isMissingRecurrenceTable(rulePullError)) throw rulePullError;
-  } else if (Array.isArray(ruleRows)) {
-    if (DEBUG) console.log('[sync] pull recurrence rules', ruleRows.length);
-    for (const row of ruleRows) {
-      const remote = mapRecurrenceRuleFromRemote(row);
-      const local = await getRecurrenceRuleByUuid(remote.uuid);
-      if (!local) {
-        const id = await addRecurrenceRule(remote);
-        if (remote.deletedAt) {
-          await syncDeletedRuleTodos(id, updatedDates);
-        }
-        continue;
-      }
-      if ((remote.updatedAt || '') > (local.updatedAt || '')) {
-        const merged = { ...local, ...remote, id: local.id };
-        const localHasChildren = Array.isArray(local.children) && local.children.length;
-        const remoteHasChildren = Array.isArray(merged.children) && merged.children.length;
-        if (!remoteHasChildren && localHasChildren) {
-          merged.children = local.children;
-        }
-        await updateRecurrenceRule(merged);
-        if (remote.deletedAt) {
-          await syncDeletedRuleTodos(local.id, updatedDates);
-        }
-      }
-    }
-    await dedupeLocalRecurrenceRules();
-  }
+  await pullRemoteRecurrenceRules(updatedDates);
 
   const { data: timerRows, error: timerPullError } = await fetchAllRowsWithError('timer_timeline');
   if (timerPullError) {
@@ -1152,6 +1156,85 @@ export async function pullRemoteChanges() {
   }
 
   return updatedDates;
+}
+
+async function pullRemoteRecurrenceRules(updatedDates) {
+  const { data: ruleRows, error: rulePullError } = await fetchAllRowsWithError('recurrence_rules');
+  if (rulePullError) {
+    if (!isMissingRecurrenceTable(rulePullError)) throw rulePullError;
+  } else if (Array.isArray(ruleRows)) {
+    if (DEBUG) console.log('[sync] pull recurrence rules', ruleRows.length);
+    const remoteRules = ruleRows.map(mapRecurrenceRuleFromRemote);
+    const localRulesBeforePull = await getAllRecurrenceRules();
+    const getCrossUuidDeletions = rules => rules.filter(rule => {
+      if (!rule.deletedAt) return false;
+      const fingerprint = getRecurrenceRuleFingerprint(rule);
+      const hasSurvivingCopy = rules.some(candidate =>
+        candidate.uuid !== rule.uuid &&
+        !candidate.deletedAt &&
+        getRecurrenceRuleFingerprint(candidate) === fingerprint &&
+        (candidate.createdAt || '') <= rule.deletedAt
+      );
+      return !hasSurvivingCopy;
+    });
+    const deletionRules = [
+      ...getCrossUuidDeletions(localRulesBeforePull),
+      ...getCrossUuidDeletions(remoteRules)
+    ];
+
+    // Historical dedupes may have assigned different UUIDs to the same rule.
+    // Propagate a tombstone across those copies only when the copy existed at
+    // the time of deletion; a rule recreated later remains active.
+    for (const localRule of localRulesBeforePull) {
+      if (localRule.deletedAt) continue;
+      const deletion = deletionRules.find(rule =>
+        getRecurrenceRuleFingerprint(rule) === getRecurrenceRuleFingerprint(localRule) &&
+        (localRule.createdAt || '') <= rule.deletedAt
+      );
+      if (!deletion) continue;
+      const deletedAt = deletion.deletedAt;
+      await updateRecurrenceRule({
+        ...localRule,
+        deletedAt,
+        updatedAt: new Date().toISOString()
+      });
+      await syncDeletedRuleTodos(localRule.id, updatedDates);
+    }
+
+    for (const remote of remoteRules) {
+      const local = await getRecurrenceRuleByUuid(remote.uuid);
+      if (!local) {
+        const deletedMatch = deletionRules.find(rule =>
+          getRecurrenceRuleFingerprint(rule) === getRecurrenceRuleFingerprint(remote) &&
+          (remote.createdAt || '') <= rule.deletedAt);
+        if (!remote.deletedAt && deletedMatch) {
+          remote.deletedAt = deletedMatch.deletedAt;
+          remote.updatedAt = new Date().toISOString();
+        }
+        const id = await addRecurrenceRule(remote);
+        if (remote.deletedAt) {
+          await syncDeletedRuleTodos(id, updatedDates);
+        }
+        continue;
+      }
+      // Deletion is final for this UUID; recreating a rule uses a new UUID.
+      if (local.deletedAt) {
+        await syncDeletedRuleTodos(local.id, updatedDates);
+        continue;
+      }
+      if (remote.deletedAt || (remote.updatedAt || '') > (local.updatedAt || '')) {
+        const merged = { ...local, ...remote, id: local.id };
+        const localHasChildren = Array.isArray(local.children) && local.children.length;
+        const remoteHasChildren = Array.isArray(merged.children) && merged.children.length;
+        if (!remoteHasChildren && localHasChildren) merged.children = local.children;
+        await updateRecurrenceRule(merged);
+        if (remote.deletedAt) {
+          await syncDeletedRuleTodos(local.id, updatedDates);
+        }
+      }
+    }
+    await dedupeLocalRecurrenceRules();
+  }
 }
 
 async function applyRemoteTimerTimeline(rows, updatedDates) {
@@ -1273,7 +1356,7 @@ function mergeTodoForPull(local, remote) {
     uuid: local.uuid || remote.uuid
   };
 
-  // 远端表当前不承载这些本地字段，拉取合并时保留本地值，避免被“覆盖为空”
+  // 远端表当前不承载这些辅助字段，拉取合并时保留本地值，避免被“覆盖为空”
   if (merged.recurrenceRuleId == null && local.recurrenceRuleId != null) {
     merged.recurrenceRuleId = local.recurrenceRuleId;
   }
@@ -1291,6 +1374,12 @@ function mergeTodoForPull(local, remote) {
   }
   if (merged.queueOrder == null && local.queueOrder != null) {
     merged.queueOrder = local.queueOrder;
+  }
+  if (merged.quadrant == null && local.quadrant != null) {
+    merged.quadrant = local.quadrant;
+  }
+  if (merged.quadrantOrder == null && local.quadrantOrder != null) {
+    merged.quadrantOrder = local.quadrantOrder;
   }
   if (!merged.userId && local.userId) {
     merged.userId = local.userId;
@@ -1324,6 +1413,8 @@ function shouldUpdateTodo(local, next) {
     Boolean(local.queued) !== Boolean(next.queued) ||
     (local.queueOrder ?? null) !== (next.queueOrder ?? null) ||
     (local.sortOrder ?? null) !== (next.sortOrder ?? null) ||
+    (local.quadrant ?? 'q1') !== (next.quadrant ?? 'q1') ||
+    (local.quadrantOrder ?? null) !== (next.quadrantOrder ?? null) ||
     (local.parentId ?? null) !== (next.parentId ?? null) ||
     (local.parentUuid ?? null) !== (next.parentUuid ?? null) ||
     (local.userId ?? null) !== (next.userId ?? null) ||

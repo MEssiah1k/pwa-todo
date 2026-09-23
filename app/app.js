@@ -33,19 +33,20 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260601-sync-fix-1';
+} from './sync.js?v=20260923-rule-sync-quadrants-cloud-3';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
+const todoQuadrant = document.getElementById('todo-quadrant');
 const dueInput = document.getElementById('todo-due');
 const todoFilterCategory = document.getElementById('todo-filter-category');
 const todoFilterPrevBtn = document.getElementById('todo-filter-prev');
 const todoFilterNextBtn = document.getElementById('todo-filter-next');
 const problemReviewOpenBtn = document.getElementById('problem-review-open');
-const todoQueuePanel = document.getElementById('todo-queue-panel');
-const todoQueueList = document.getElementById('todo-queue-list');
 const addBtn = document.getElementById('add-btn');
-const list = document.getElementById('todo-list');
+const quadrantLists = new Map(
+  Array.from(document.querySelectorAll('.quadrant-list')).map(element => [element.dataset.quadrant, element])
+);
 const completedList = document.getElementById('completed-list');
 const completedModule = document.getElementById('completed-module');
 const status = document.getElementById('status');
@@ -100,6 +101,7 @@ const recurrenceModal = document.getElementById('recurrence-modal');
 const recurrenceCloseBtn = document.getElementById('recurrence-close');
 const recurrenceList = document.getElementById('recurrence-list');
 const recurrenceCategory = document.getElementById('recurrence-category');
+const recurrenceQuadrant = document.getElementById('recurrence-quadrant');
 const recurrenceText = document.getElementById('recurrence-text');
 const recurrenceType = document.getElementById('recurrence-type');
 const recurrenceCustom = document.getElementById('recurrence-custom');
@@ -117,6 +119,7 @@ const recurrenceChildrenAdd = document.getElementById('recurrence-children-add')
 const recurrenceEditModal = document.getElementById('recurrence-edit-modal');
 const recurrenceEditCloseBtn = document.getElementById('recurrence-edit-close');
 const recurrenceEditCategory = document.getElementById('recurrence-edit-category');
+const recurrenceEditQuadrant = document.getElementById('recurrence-edit-quadrant');
 const recurrenceEditText = document.getElementById('recurrence-edit-text');
 const recurrenceEditType = document.getElementById('recurrence-edit-type');
 const recurrenceEditCustom = document.getElementById('recurrence-edit-custom');
@@ -224,6 +227,15 @@ const PROBLEM_REVIEW_QUESTIONS = [
   '3. 我现在能做的最小一步是什么？'
 ];
 const TODO_FILTER_SEQUENCE = ['All', 'Work', 'Life', 'Health', 'Social', 'Growth', 'Leisure', 'Plan'];
+const TODO_QUADRANTS = ['q1', 'q2', 'q3', 'q4'];
+const DEFAULT_TODO_QUADRANT = 'q1';
+const TODO_QUADRANT_LABELS = {
+  q1: '重要且紧急',
+  q2: '重要不紧急',
+  q3: '紧急不重要',
+  q4: '不重要不紧急'
+};
+const CLOUD_SYNC_ENABLED = true;
 
 migrateLegacyLocalStorageKeys([
   'pwaTodo.timerState',
@@ -849,7 +861,7 @@ async function loadTodos() {
   await dedupeTodosForDate(selectedDate);
   await pruneInProgressTodos();
   todos = await getTodosByDate(selectedDate);
-  todos = await ensurePendingTodoOrders(todos);
+  todos = await ensureQuadrantTodoOrders(todos);
   renderTodos();
 }
 
@@ -907,6 +919,8 @@ async function carryOverIncomplete(fromDate, toDate) {
       dueMinutes: todo.dueMinutes ?? null,
       recurrenceRuleId: null,
       carriedFrom: todo.uuid,
+      quadrant: getTodoQuadrant(todo),
+      quadrantOrder: Number.isFinite(todo.quadrantOrder) ? todo.quadrantOrder : null,
       uuid: newParentUuid,
       userId
     });
@@ -967,8 +981,11 @@ async function moveTodoToTomorrow(todo) {
 }
 
 function renderTodos() {
-  list.innerHTML = '';
-  if (todoQueueList) todoQueueList.innerHTML = '';
+  quadrantLists.forEach(quadrantList => {
+    quadrantList.innerHTML = '';
+    quadrantList.classList.remove('is-drag-over');
+    quadrantList.closest('.quadrant')?.classList.remove('is-drag-over');
+  });
   if (completedList) completedList.innerHTML = '';
   runningTimeEls.clear();
   const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
@@ -1015,8 +1032,7 @@ function renderTodos() {
     !t.completed || hasPendingChildren(t.uuid)
   ).sort(comparePendingTodos);
 
-  const queuedTodos = pendingRoots.filter(t => isTodoQueued(t)).sort(compareQueuedTodos);
-  const listTodos = pendingRoots.filter(t => !isTodoQueued(t) && matchesSelectedCategory(t)).sort(comparePendingTodos);
+  const visiblePendingRoots = pendingRoots.filter(matchesSelectedCategory);
 
   // Done: root tasks that are completed themselves OR have completed children
   const doneRoots = rootTodos.filter(t =>
@@ -1076,12 +1092,13 @@ function renderTodos() {
     li.className = 'todo-item';
     if (todo.completed) li.classList.add('completed');
     if (isTodoInProgress(todo)) li.classList.add('in-progress');
+    if (isTodoQueued(todo)) li.classList.add('is-pinned');
     if (children.length > 0) li.classList.add('is-parent');
     if (isChild) li.classList.add('is-child');
     li.dataset.id = String(todo.id);
     li.dataset.group = group;
 
-    if (!isChild && (targetList === list || targetList === todoQueueList)) {
+    if (!isChild && quadrantLists.has(group)) {
       li.draggable = true;
       li.ondragstart = event => {
         if (li.classList.contains('editing')) { event.preventDefault(); return; }
@@ -1091,18 +1108,21 @@ function renderTodos() {
       };
       li.ondragend = () => { draggedTodoId = null; draggedTodoGroup = null; li.classList.remove('todo-dragging'); clearTodoDropIndicatorClasses(); };
       li.ondragover = event => {
-        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
+        if (draggedTodoId == null || draggedTodoId === todo.id) return;
         event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
         li.classList.toggle('todo-drop-before', !shouldInsertAfter(event, li));
         li.classList.toggle('todo-drop-after', shouldInsertAfter(event, li));
       };
       li.ondragleave = () => li.classList.remove('todo-drop-before', 'todo-drop-after');
       li.ondrop = async event => {
-        if (draggedTodoId == null || draggedTodoId === todo.id || draggedTodoGroup !== group) return;
+        if (draggedTodoId == null || draggedTodoId === todo.id) return;
         event.preventDefault();
+        event.stopPropagation();
         suppressTodoClickUntil = Date.now() + 300;
         clearTodoDropIndicatorClasses();
-        await reorderPendingTodos(draggedTodoId, todo.id, shouldInsertAfter(event, li), group);
+        await movePendingTodo(draggedTodoId, group, todo.id, shouldInsertAfter(event, li));
       };
     }
 
@@ -1111,9 +1131,22 @@ function renderTodos() {
     const mainRow = document.createElement('div');
     mainRow.className = 'todo-main';
 
+    const parsedTodo = parseCategorizedText(todo.text);
+    const category = document.createElement('span');
+    category.className = 'todo-category-badge';
+    category.textContent = parsedTodo.category;
+    mainRow.appendChild(category);
+
+    if (isTodoQueued(todo)) {
+      const pinnedBadge = document.createElement('span');
+      pinnedBadge.className = 'todo-pin-badge';
+      pinnedBadge.textContent = '置顶';
+      mainRow.appendChild(pinnedBadge);
+    }
+
     const text = document.createElement('span');
     text.className = 'todo-text';
-    text.textContent = todo.text;
+    text.textContent = parsedTodo.text;
     text.ondblclick = event => { event.stopPropagation(); beginTodoEdit(todo, li, mainRow, text); };
     mainRow.appendChild(text);
 
@@ -1153,21 +1186,24 @@ function renderTodos() {
     }
 
     if (!isChild && !todo.completed) {
-      const queueBtn = document.createElement('button');
-      queueBtn.className = 'queue-btn';
-      queueBtn.type = 'button';
-      queueBtn.textContent = isTodoQueued(todo) ? '出列' : '入列';
-      queueBtn.onclick = async event => {
+      const pinBtn = document.createElement('button');
+      pinBtn.className = 'queue-btn';
+      pinBtn.type = 'button';
+      pinBtn.textContent = isTodoQueued(todo) ? '取消置顶' : '置顶';
+      pinBtn.title = isTodoQueued(todo) ? '取消该象限内的置顶' : '置顶到当前象限顶部';
+      pinBtn.onclick = async event => {
         event.stopPropagation();
-        const now = new Date().toISOString();
-        if (isTodoQueued(todo)) {
-          await updateTodo({ ...todo, queued: false, queueOrder: null, sortOrder: getNextPendingSortOrder(), updatedAt: now });
-        } else {
-          await updateTodo({ ...todo, queued: true, queueOrder: getNextQueuedSortOrder(), updatedAt: now });
-        }
-        triggerChangeSync(); loadTodos();
+        const pinned = isTodoQueued(todo);
+        await updateTodo({
+          ...todo,
+          queued: !pinned,
+          queueOrder: pinned ? null : getNextQueuedSortOrder(),
+          updatedAt: new Date().toISOString()
+        });
+        triggerChangeSync();
+        loadTodos();
       };
-      actions.appendChild(queueBtn);
+      actions.appendChild(pinBtn);
     }
 
     if (!isChild) {
@@ -1250,9 +1286,19 @@ function renderTodos() {
     targetList.appendChild(li);
   };
 
-  queuedTodos.forEach(todo => renderTodoItem(todo, todoQueueList, 'queue', false, getPendingChildren(todo.uuid)));
-  if (todoQueuePanel) todoQueuePanel.classList.toggle('has-items', queuedTodos.length > 0);
-  listTodos.forEach(todo => renderTodoItem(todo, list, 'list', false, getPendingChildren(todo.uuid)));
+  TODO_QUADRANTS.forEach(quadrant => {
+    const quadrantList = quadrantLists.get(quadrant);
+    if (!quadrantList) return;
+    const quadrantTodos = visiblePendingRoots
+      .filter(todo => getTodoQuadrant(todo) === quadrant)
+      .sort(compareQuadrantTodos);
+    quadrantTodos.forEach(todo => renderTodoItem(todo, quadrantList, quadrant, false, getPendingChildren(todo.uuid)));
+    const quadrantElement = quadrantList.closest('.quadrant');
+    const countElement = quadrantElement ? quadrantElement.querySelector('.quadrant-count') : null;
+    if (countElement) countElement.textContent = String(quadrantTodos.length);
+    quadrantElement?.classList.toggle('is-empty', quadrantTodos.length === 0);
+    setupQuadrantDropZone(quadrantList, quadrant);
+  });
   if (completedList) {
     doneRoots.forEach(todo => renderTodoItem(todo, completedList, 'list', false, getCompletedChildren(todo.uuid)));
   }
@@ -1312,6 +1358,28 @@ function isTodoInProgress(todo) {
 
 function isTodoQueued(todo) {
   return Boolean(todo && !todo.deletedAt && !todo.completed && todo.queued);
+}
+
+function getTodoQuadrant(todo) {
+  return todo && TODO_QUADRANTS.includes(todo.quadrant)
+    ? todo.quadrant
+    : DEFAULT_TODO_QUADRANT;
+}
+
+function compareQuadrantTodos(a, b) {
+  const aPinned = isTodoQueued(a);
+  const bPinned = isTodoQueued(b);
+  if (aPinned !== bPinned) return aPinned ? -1 : 1;
+  if (aPinned && bPinned) {
+    const queuedComparison = compareQueuedTodos(a, b);
+    if (queuedComparison !== 0) return queuedComparison;
+  }
+  const aOrder = Number.isFinite(a.quadrantOrder) ? a.quadrantOrder : null;
+  const bOrder = Number.isFinite(b.quadrantOrder) ? b.quadrantOrder : null;
+  if (aOrder != null && bOrder != null && aOrder !== bOrder) return aOrder - bOrder;
+  if (aOrder != null) return -1;
+  if (bOrder != null) return 1;
+  return comparePendingTodos(a, b);
 }
 
 function getTodoSortTime(todo) {
@@ -1381,6 +1449,29 @@ async function ensurePendingTodoOrders(items) {
   return items.map(todo => listUpdates.get(todo.id) || queueUpdates.get(todo.id) || todo);
 }
 
+async function ensureQuadrantTodoOrders(items) {
+  const updatedById = new Map();
+  const migrationUpdatedAt = new Date().toISOString();
+  for (const quadrant of TODO_QUADRANTS) {
+    const quadrantTodos = items
+      .filter(todo => todo && !todo.deletedAt && !todo.completed && !todo.parentUuid && getTodoQuadrant(todo) === quadrant)
+      .sort(compareQuadrantTodos);
+    for (let index = 0; index < quadrantTodos.length; index += 1) {
+      const todo = quadrantTodos[index];
+      if (todo.quadrant === quadrant && todo.quadrantOrder === index) continue;
+      const nextTodo = {
+        ...todo,
+        quadrant,
+        quadrantOrder: index,
+        updatedAt: migrationUpdatedAt
+      };
+      await updateTodo(nextTodo);
+      updatedById.set(todo.id, nextTodo);
+    }
+  }
+  return items.map(todo => updatedById.get(todo.id) || todo);
+}
+
 function shouldInsertAfter(event, element) {
   const rect = element.getBoundingClientRect();
   return event.clientY >= rect.top + rect.height / 2;
@@ -1388,49 +1479,81 @@ function shouldInsertAfter(event, element) {
 
 function clearTodoDropIndicatorClasses() {
   document
-    .querySelectorAll('.todo-drop-before, .todo-drop-after, .todo-dragging')
-    .forEach(item => item.classList.remove('todo-drop-before', 'todo-drop-after', 'todo-dragging'));
+    .querySelectorAll('.todo-drop-before, .todo-drop-after, .todo-dragging, .quadrant.is-drag-over')
+    .forEach(item => item.classList.remove('todo-drop-before', 'todo-drop-after', 'todo-dragging', 'is-drag-over'));
 }
 
-async function reorderPendingTodos(draggedId, targetId, insertAfter, group = 'list') {
-  const isQueueGroup = group === 'queue';
-  const compare = isQueueGroup ? compareQueuedTodos : comparePendingTodos;
-  const orderKey = isQueueGroup ? 'queueOrder' : 'sortOrder';
-  const orderedPendingTodos = todos
-    .filter(todo =>
-      todo &&
-      !todo.deletedAt &&
-      !todo.completed &&
-      (isQueueGroup ? isTodoQueued(todo) : !isTodoQueued(todo))
-    )
-    .sort(compare);
-  const draggedIndex = orderedPendingTodos.findIndex(todo => todo.id === draggedId);
-  const targetIndex = orderedPendingTodos.findIndex(todo => todo.id === targetId);
-  if (draggedIndex < 0 || targetIndex < 0) return;
+function setupQuadrantDropZone(quadrantList, quadrant) {
+  const quadrantElement = quadrantList.closest('.quadrant');
+  if (!quadrantElement) return;
 
-  const reorderedTodos = [...orderedPendingTodos];
-  const [draggedTodo] = reorderedTodos.splice(draggedIndex, 1);
-  const adjustedTargetIndex = reorderedTodos.findIndex(todo => todo.id === targetId);
-  const insertIndex = insertAfter ? adjustedTargetIndex + 1 : adjustedTargetIndex;
-  reorderedTodos.splice(insertIndex, 0, draggedTodo);
+  quadrantElement.ondragenter = event => {
+    if (draggedTodoId == null) return;
+    event.preventDefault();
+    quadrantElement.classList.add('is-drag-over');
+  };
+  quadrantElement.ondragover = event => {
+    if (draggedTodoId == null) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    quadrantElement.classList.add('is-drag-over');
+  };
+  quadrantElement.ondragleave = event => {
+    if (!quadrantElement.contains(event.relatedTarget)) quadrantElement.classList.remove('is-drag-over');
+  };
+  quadrantElement.ondrop = async event => {
+    if (draggedTodoId == null) return;
+    event.preventDefault();
+    quadrantElement.classList.remove('is-drag-over');
+    suppressTodoClickUntil = Date.now() + 300;
+    await movePendingTodo(draggedTodoId, quadrant);
+  };
+}
 
+async function movePendingTodo(draggedId, targetQuadrant, targetId = null, insertAfter = true) {
+  if (!TODO_QUADRANTS.includes(targetQuadrant)) return;
+  const draggedTodo = todos.find(todo => todo.id === draggedId && !todo.parentUuid && !todo.deletedAt && !todo.completed);
+  if (!draggedTodo) return;
+
+  const sourceQuadrant = getTodoQuadrant(draggedTodo);
+  const pendingRoots = todos.filter(todo => todo && !todo.parentUuid && !todo.deletedAt && !todo.completed);
+  const targetTodos = pendingRoots
+    .filter(todo => todo.id !== draggedId && getTodoQuadrant(todo) === targetQuadrant)
+    .sort(compareQuadrantTodos);
+  let insertIndex = targetTodos.length;
+  if (targetId != null) {
+    const targetIndex = targetTodos.findIndex(todo => todo.id === targetId);
+    if (targetIndex >= 0) insertIndex = targetIndex + (insertAfter ? 1 : 0);
+  }
+  targetTodos.splice(insertIndex, 0, draggedTodo);
+
+  const sourceTodos = sourceQuadrant === targetQuadrant
+    ? []
+    : pendingRoots
+      .filter(todo => todo.id !== draggedId && getTodoQuadrant(todo) === sourceQuadrant)
+      .sort(compareQuadrantTodos);
+  const quadrantUpdatedAt = new Date().toISOString();
   const updatedById = new Map();
-  await Promise.all(
-    reorderedTodos.map(async (todo, index) => {
-      if (todo[orderKey] === index) {
-        updatedById.set(todo.id, todo);
-        return;
-      }
+  const persistGroup = async (items, quadrant) => {
+    for (let index = 0; index < items.length; index += 1) {
+      const todo = items[index];
+      if (getTodoQuadrant(todo) === quadrant && todo.quadrantOrder === index) continue;
       const nextTodo = {
         ...todo,
-        [orderKey]: index
+        quadrant,
+        quadrantOrder: index,
+        updatedAt: quadrantUpdatedAt
       };
       await updateTodo(nextTodo);
       updatedById.set(todo.id, nextTodo);
-    })
-  );
+    }
+  };
 
+  await persistGroup(sourceTodos, sourceQuadrant);
+  await persistGroup(targetTodos, targetQuadrant);
   todos = todos.map(todo => updatedById.get(todo.id) || todo);
+  clearTodoDropIndicatorClasses();
+  triggerChangeSync();
   renderTodos();
 }
 
@@ -1578,7 +1701,8 @@ function beginTodoEdit(todo, li, textContainer, textNode) {
   const inputEdit = document.createElement('input');
   inputEdit.className = 'edit-input';
   inputEdit.type = 'text';
-  inputEdit.value = todo.text;
+  const parsedTodo = parseCategorizedText(todo.text);
+  inputEdit.value = parsedTodo.text;
   textContainer.replaceChild(inputEdit, textNode);
   inputEdit.focus();
   inputEdit.setSelectionRange(inputEdit.value.length, inputEdit.value.length);
@@ -1592,10 +1716,11 @@ function beginTodoEdit(todo, li, textContainer, textNode) {
       loadTodos();
       return;
     }
-    if (save && nextText !== todo.text) {
+    const nextStoredText = formatTodoText(parsedTodo.category, nextText);
+    if (save && nextStoredText !== todo.text) {
       await updateTodo({
         ...todo,
-        text: nextText,
+        text: nextStoredText,
         updatedAt: new Date().toISOString()
       });
       triggerChangeSync();
@@ -1716,6 +1841,10 @@ addBtn.onclick = async () => {
     queued: false,
     queueOrder: null,
     sortOrder: getNextPendingSortOrder(),
+    quadrant: todoQuadrant && TODO_QUADRANTS.includes(todoQuadrant.value)
+      ? todoQuadrant.value
+      : DEFAULT_TODO_QUADRANT,
+    quadrantOrder: 0,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -2332,6 +2461,7 @@ async function addRecurrenceSkip(dateStr, ruleId) {
 
 function resetRecurrenceForm() {
   if (recurrenceCategory) recurrenceCategory.value = 'Work';
+  if (recurrenceQuadrant) recurrenceQuadrant.value = DEFAULT_TODO_QUADRANT;
   if (recurrenceText) recurrenceText.value = '';
   if (recurrenceType) recurrenceType.value = 'daily';
   if (recurrenceInterval) recurrenceInterval.value = '1';
@@ -2353,6 +2483,7 @@ function resetRecurrenceForm() {
 function resetRecurrenceEditForm() {
   editingRecurrenceRuleId = null;
   if (recurrenceEditCategory) recurrenceEditCategory.value = 'Work';
+  if (recurrenceEditQuadrant) recurrenceEditQuadrant.value = DEFAULT_TODO_QUADRANT;
   if (recurrenceEditText) recurrenceEditText.value = '';
   if (recurrenceEditType) recurrenceEditType.value = 'daily';
   if (recurrenceEditInterval) recurrenceEditInterval.value = '1';
@@ -2376,6 +2507,11 @@ function fillRecurrenceEditForm(rule) {
   editingRecurrenceRuleId = rule.id;
   const parsed = parseCategorizedText(rule.text);
   if (recurrenceEditCategory) recurrenceEditCategory.value = parsed.category;
+  if (recurrenceEditQuadrant) {
+    recurrenceEditQuadrant.value = TODO_QUADRANTS.includes(rule.quadrant)
+      ? rule.quadrant
+      : DEFAULT_TODO_QUADRANT;
+  }
   if (recurrenceEditText) recurrenceEditText.value = parsed.text;
   if (recurrenceEditType) recurrenceEditType.value = rule.type || 'daily';
   if (recurrenceEditInterval) recurrenceEditInterval.value = String(rule.interval || 1);
@@ -2405,7 +2541,7 @@ function closeRecurrenceEditModal() {
   if (recurrenceEditModal) recurrenceEditModal.classList.add('hidden');
 }
 
-async function syncFutureRecurringTodos(ruleId, nextText) {
+async function syncFutureRecurringTodos(ruleId, nextText, nextQuadrant) {
   if (!Number.isFinite(Number(ruleId))) return;
   const today = getTodayDateStr();
   const related = await getTodosByRuleId(ruleId);
@@ -2421,6 +2557,8 @@ async function syncFutureRecurringTodos(ruleId, nextText) {
       updateTodo({
         ...todo,
         text: nextText,
+        quadrant: TODO_QUADRANTS.includes(nextQuadrant) ? nextQuadrant : DEFAULT_TODO_QUADRANT,
+        quadrantOrder: getTodoQuadrant(todo) === nextQuadrant ? todo.quadrantOrder : null,
         updatedAt: now
       })
     )
@@ -2449,6 +2587,9 @@ function collectRecurrenceFormValue(fields) {
   }
   return {
     text: formatTodoText(fields.category ? fields.category.value : 'Work', text),
+    quadrant: fields.quadrant && TODO_QUADRANTS.includes(fields.quadrant.value)
+      ? fields.quadrant.value
+      : DEFAULT_TODO_QUADRANT,
     type,
     weekdays,
     day,
@@ -2467,7 +2608,8 @@ function renderRecurrenceRules() {
     const li = document.createElement('li');
     const text = document.createElement('span');
     text.className = 'recurrence-text';
-    text.textContent = `${rule.text} · ${formatRecurrence(rule)}`;
+    const quadrant = TODO_QUADRANTS.includes(rule.quadrant) ? rule.quadrant : DEFAULT_TODO_QUADRANT;
+    text.textContent = `${rule.text} · ${TODO_QUADRANT_LABELS[quadrant]} · ${formatRecurrence(rule)}`;
 
     const info = document.createElement('div');
     info.className = 'recurrence-info';
@@ -2643,6 +2785,8 @@ async function ensureRecurrenceForDate(dateStr) {
       deletedAt: null,
       dueMinutes: null,
       recurrenceRuleId: rule.id,
+      quadrant: TODO_QUADRANTS.includes(rule.quadrant) ? rule.quadrant : DEFAULT_TODO_QUADRANT,
+      quadrantOrder: null,
       uuid: parentUuid,
       userId
     });
@@ -2759,6 +2903,7 @@ if (recurrenceAddBtn) {
     const now = new Date().toISOString();
     const rule = collectRecurrenceFormValue({
       category: recurrenceCategory,
+      quadrant: recurrenceQuadrant,
       text: recurrenceText,
       type: recurrenceType,
       weekly: recurrenceWeekly,
@@ -2801,6 +2946,7 @@ if (recurrenceEditSaveBtn) {
     const now = new Date().toISOString();
     const rule = collectRecurrenceFormValue({
       category: recurrenceEditCategory,
+      quadrant: recurrenceEditQuadrant,
       text: recurrenceEditText,
       type: recurrenceEditType,
       weekly: recurrenceEditWeekly,
@@ -2822,7 +2968,7 @@ if (recurrenceEditSaveBtn) {
       deletedAt: null,
       createdAt: current.createdAt || now
     });
-    await syncFutureRecurringTodos(current.id, rule.text);
+    await syncFutureRecurringTodos(current.id, rule.text, rule.quadrant);
     triggerChangeSync();
     await loadRecurrenceRules();
     await loadForDate();
@@ -3071,6 +3217,7 @@ async function copyBgmDebugText() {
 }
 
 function triggerChangeSync() {
+  if (!CLOUD_SYNC_ENABLED) return;
   pendingChangeSync = true;
   void flushChangeSync();
 }
@@ -4713,21 +4860,24 @@ function setSyncStatus(text) {
   syncStatus.textContent = text;
 }
 
-const initPromise = initSync({
-  onStatus: setSyncStatus,
-  onUpdate: updatedDates => {
-    void restoreTimerTimeline();
-    loadRecurrenceRules();
-    if (updatedDates.has(selectedDate)) {
-      loadForDate();
+const initPromise = CLOUD_SYNC_ENABLED
+  ? initSync({
+    onStatus: setSyncStatus,
+    onUpdate: updatedDates => {
+      void restoreTimerTimeline();
+      loadRecurrenceRules();
+      if (updatedDates.has(selectedDate)) {
+        loadForDate();
+      }
     }
-  }
-});
+  })
+  : Promise.resolve({ userId: ensureUserId() });
 syncInitPromise = initPromise;
 
 initPromise.then(result => {
-  syncReady = true;
   currentUserId = result && result.userId ? result.userId : null;
+  if (!CLOUD_SYNC_ENABLED) return;
+  syncReady = true;
   void syncNaturalDayState();
   if (pendingChangeSync) {
     void flushChangeSync();
@@ -5029,7 +5179,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260602-chip-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260923-quadrants-11', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

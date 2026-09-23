@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PWA Todo</title>
-  <link rel="stylesheet" href="style.css?v=20260602-chip-2" />
+  <link rel="stylesheet" href="style.css?v=20260923-quadrants-11" />
   <link rel="icon" type="image/svg+xml" href="app/icon.svg" />
   <link rel="manifest" href="app/manifest.json?v=20260330-problem-review-1" />
 </head>
@@ -84,6 +84,7 @@
         <button id="sync-full-btn" type="button">上传</button>
       </div>
       <span id="sync-status" class="sync-status">未同步</span>
+      <span class="local-storage-badge" title="任务的象限归属与象限内排序会同步到云端">象限云同步</span>
     </div>
   </section>
 
@@ -101,6 +102,12 @@
         <option value="Growth">Growth</option>
         <option value="Leisure">Leisure</option>
         <option value="Plan">Plan</option>
+      </select>
+      <select id="todo-quadrant" aria-label="选择任务象限">
+        <option value="q1" selected>重要且紧急</option>
+        <option value="q2">重要不紧急</option>
+        <option value="q3">紧急不重要</option>
+        <option value="q4">不重要不紧急</option>
       </select>
       <div class="todo-intention-note">只要我能继续做下一步，就不允许自己继续深入理解</div>
     </div>
@@ -129,11 +136,25 @@
       <button id="todo-filter-prev" type="button" class="todo-filter-nav-btn">上一页</button>
       <button id="todo-filter-next" type="button" class="todo-filter-nav-btn">下一页</button>
     </div>
-    <div id="todo-queue-panel" class="todo-queue-panel" aria-label="计划任务区">
-      <ul id="todo-queue-list"></ul>
-    </div>
     <p id="status" aria-live="polite"></p>
-    <ul id="todo-list"></ul>
+    <div id="quadrant-board" class="quadrant-board" aria-label="四象限任务看板">
+      <section class="quadrant quadrant-q1" data-quadrant="q1">
+        <div class="quadrant-header"><div><h3>重要且紧急</h3><p>立即处理</p></div><span class="quadrant-count">0</span></div>
+        <ul id="quadrant-q1-list" class="quadrant-list" data-quadrant="q1"></ul>
+      </section>
+      <section class="quadrant quadrant-q2" data-quadrant="q2">
+        <div class="quadrant-header"><div><h3>重要不紧急</h3><p>安排时间</p></div><span class="quadrant-count">0</span></div>
+        <ul id="quadrant-q2-list" class="quadrant-list" data-quadrant="q2"></ul>
+      </section>
+      <section class="quadrant quadrant-q3" data-quadrant="q3">
+        <div class="quadrant-header"><div><h3>紧急不重要</h3><p>尽快完成或委派</p></div><span class="quadrant-count">0</span></div>
+        <ul id="quadrant-q3-list" class="quadrant-list" data-quadrant="q3"></ul>
+      </section>
+      <section class="quadrant quadrant-q4" data-quadrant="q4">
+        <div class="quadrant-header"><div><h3>不重要不紧急</h3><p>稍后再做</p></div><span class="quadrant-count">0</span></div>
+        <ul id="quadrant-q4-list" class="quadrant-list" data-quadrant="q4"></ul>
+      </section>
+    </div>
   </section>
 
   <div id="recurrence-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
@@ -153,6 +174,12 @@
           <option value="Growth">Growth</option>
           <option value="Leisure">Leisure</option>
           <option value="Plan">Plan</option>
+        </select>
+        <select id="recurrence-quadrant" aria-label="选择重复任务象限">
+          <option value="q1" selected>重要且紧急</option>
+          <option value="q2">重要不紧急</option>
+          <option value="q3">紧急不重要</option>
+          <option value="q4">不重要不紧急</option>
         </select>
         <input id="recurrence-text" placeholder="输入重复事项内容" />
         <div class="recurrence-frequency">
@@ -228,6 +255,12 @@
           <option value="Growth">Growth</option>
           <option value="Leisure">Leisure</option>
           <option value="Plan">Plan</option>
+        </select>
+        <select id="recurrence-edit-quadrant" aria-label="选择重复任务象限">
+          <option value="q1" selected>重要且紧急</option>
+          <option value="q2">重要不紧急</option>
+          <option value="q3">紧急不重要</option>
+          <option value="q4">不重要不紧急</option>
         </select>
         <input id="recurrence-edit-text" placeholder="输入重复事项内容" />
         <div class="recurrence-frequency">
@@ -320,7 +353,7 @@
     <h2>已完成事项</h2>
     <ul id="completed-list"></ul>
   </section>
-  <script type="module" src="app/app.js?v=20260602-chip-2"></script>
+  <script type="module" src="app/app.js?v=20260923-quadrants-11"></script>
   </div>
 
   <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">

@@ -56,6 +56,13 @@ pwa-todo/
 2. 安装系统依赖（Linux）：`sudo apt install libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev`
 3. `cd native && cargo run`
 
+## Supabase 迁移
+
+首次启用四象限云同步前，在 Supabase SQL Editor 中执行
+[`supabase_todo_quadrants.sql`](./supabase_todo_quadrants.sql)。该迁移为 `todos`
+表增加 `quadrant` 与 `quadrant_order` 字段，并为 `recurrence_rules` 增加默认
+`quadrant` 字段；旧任务和旧规则默认归入 `q1`。
+
 ## 说明
 - 离线缓存策略为 Cache First。
 - 两个版本共享相同的数据模型定义。
