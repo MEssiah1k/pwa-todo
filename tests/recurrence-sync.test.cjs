@@ -145,13 +145,35 @@ test('recurrence rule cloud mapping preserves its default quadrant', () => {
   assert.equal(h.context.mapRecurrenceRuleToRemote(rule()).quadrant, 'q1');
 });
 
-test('otherwise identical recurrence rules in different quadrants remain distinct', async () => {
+test('otherwise identical recurrence rules in different quadrants are deduped', async () => {
   const h = harness([
     rule({ quadrant: 'q1' }),
-    rule({ id: 2, uuid: 'rule-2', quadrant: 'q2' })
+    rule({ id: 2, uuid: 'rule-2', quadrant: 'q2', updatedAt: newer })
   ]);
   await h.dedupe();
-  assert.equal(h.local.filter(item => !item.deletedAt).length, 2);
+  const survivors = h.local.filter(item => !item.deletedAt);
+  assert.equal(survivors.length, 1);
+  assert.equal(survivors[0].quadrant, 'q2');
+});
+
+test('todo identity ignores quadrant while newer quadrant data still wins', () => {
+  const h = harness([]);
+  const q1 = { date: '2026-09-23', text: 'Work:same task', quadrant: 'q1' };
+  const q4 = { ...q1, quadrant: 'q4', quadrantOrder: 2 };
+  assert.equal(h.context.getTodoFingerprint(q1), h.context.getTodoFingerprint(q4));
+
+  const local = {
+    id: 18, uuid: 'same-task-local', ...q1, completed: false,
+    createdAt, updatedAt: deletedAt, deletedAt: null
+  };
+  const remote = {
+    uuid: 'same-task-remote', ...q4, completed: false,
+    createdAt, updatedAt: newer, deletedAt: null
+  };
+  const merged = h.context.mergeTodoForPull(local, remote);
+  assert.equal(merged.id, local.id);
+  assert.equal(merged.quadrant, 'q4');
+  assert.equal(merged.quadrantOrder, 2);
 });
 
 test('failed cloud read prevents upload of stale active rules', async () => {

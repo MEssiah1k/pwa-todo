@@ -268,8 +268,7 @@ function getRecurrenceRuleFingerprint(rule) {
     rule.month ?? '',
     rule.interval ?? '',
     rule.unit ?? '',
-    childrenKey,
-    ['q1', 'q2', 'q3', 'q4'].includes(rule.quadrant) ? rule.quadrant : 'q1'
+    childrenKey
   ].join('__');
 }
 

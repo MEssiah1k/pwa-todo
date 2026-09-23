@@ -33,7 +33,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260923-rule-sync-quadrants-cloud-3';
+} from './sync.js?v=20260923-rule-sync-quadrants-cloud-4';
 
 const input = document.getElementById('todo-input');
 const todoCategory = document.getElementById('todo-category');
@@ -5179,7 +5179,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260923-quadrants-11', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20260923-quadrants-12', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
