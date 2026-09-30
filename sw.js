@@ -1,9 +1,9 @@
-const CACHE_NAME = 'todo-cache-v78';
+const CACHE_NAME = 'todo-cache-v79';
 const CACHE_PREFIX = 'todo-cache-';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=20260923-quadrants-12',
+  './style.css?v=20260930-actions-1',
   './app/app.js?v=20260923-quadrants-12',
   './app/db.js?v=20260328-sync-fix-2',
   './app/sync.js?v=20260923-rule-sync-quadrants-cloud-4',
