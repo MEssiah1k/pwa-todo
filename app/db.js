@@ -473,18 +473,43 @@ export async function updateRecurrenceRule(rule) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(RECURRENCE_STORE, 'readwrite');
     const store = tx.objectStore(RECURRENCE_STORE);
-    const req = store.put(rule);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    // Read and write in one transaction so an in-flight pull/edit cannot
+    // resurrect a row deleted after it took its snapshot.
+    const req = store.get(rule.id);
+    req.onsuccess = () => {
+      const current = req.result;
+      store.put(current && current.deletedAt ? {
+        ...current,
+        uuid: current.uuid || rule.uuid,
+        updatedAt: [current.updatedAt || '', rule.updatedAt || ''].sort().pop()
+      } : rule);
+    };
+    tx.oncomplete = () => resolve(rule.id);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('重复规则保存失败'));
   });
 }
 
 export async function deleteRecurrenceRule(id) {
-  const rule = await getRecurrenceRuleById(id);
-  if (!rule) return false;
-  return updateRecurrenceRule({
-    ...rule,
-    deletedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(RECURRENCE_STORE, 'readwrite');
+    const store = tx.objectStore(RECURRENCE_STORE);
+    let found = false;
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const rule = req.result.find(item => item.id === id);
+      if (!rule) return;
+      found = true;
+      const now = new Date().toISOString();
+      for (const item of req.result) {
+        if (item.id === id || (rule.uuid && item.uuid === rule.uuid)) {
+          store.put({ ...item, deletedAt: item.deletedAt || now, updatedAt: now });
+        }
+      }
+    };
+    tx.oncomplete = () => resolve(found);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('重复规则删除失败'));
   });
 }

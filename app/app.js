@@ -15,7 +15,7 @@ import {
   updateRecurrenceRule,
   deleteRecurrenceRule,
   getTodosByRuleId
-} from './db.js?v=20260328-sync-fix-2';
+} from './db.js?v=20261016-recurrence-delete-1';
 import * as bgm from './bgm.js?v=20260328-sync-fix-2';
 import {
   createScopedStorageKey,
@@ -33,7 +33,7 @@ import {
   fetchRemoteKvsByPrefix,
   upsertRemoteKv,
   insertRemoteKvIfAbsent
-} from './sync.js?v=20260923-rule-sync-quadrants-cloud-4';
+} from './sync.js?v=20261016-recurrence-delete-1';
 
 const input = document.getElementById('todo-input');
 const todoQuadrant = document.getElementById('todo-quadrant');
@@ -1918,7 +1918,8 @@ window.addEventListener('resize', () => {
 // -------- Recurrence rules --------
 async function loadRecurrenceRules() {
   await dedupeLocalRecurrenceRules();
-  recurrenceRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
+  const activeRules = (await getAllRecurrenceRules()).filter(rule => !rule.deletedAt);
+  recurrenceRules = [...new Map(activeRules.map(rule => [rule.uuid || rule.id, rule])).values()];
   if (typeof console !== 'undefined') {
     for (const r of recurrenceRules) {
       if (r.children && r.children.length) console.log('[recurrence] rule', r.id, 'children:', r.children);
@@ -4497,7 +4498,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20261016-remove-timeline-4', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20261016-recurrence-delete-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

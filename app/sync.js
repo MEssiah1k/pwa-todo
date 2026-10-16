@@ -19,7 +19,7 @@ import {
   updateSummary,
   addRecurrenceRule,
   updateRecurrenceRule
-} from './db.js?v=20260325-module-fix-1';
+} from './db.js?v=20261016-recurrence-delete-1';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
@@ -304,10 +304,38 @@ function pickPreferredRecurrenceRules(rules) {
 
 export async function dedupeLocalRecurrenceRules() {
   const rules = await getAllRecurrenceRules();
+  // Legacy imports can leave several local IDs for one UUID (the index is
+  // non-unique). A deletion applies to the identity, not just its first row.
+  const deletedByUuid = new Map(rules.filter(rule => rule.uuid && rule.deletedAt)
+    .map(rule => [rule.uuid, rule]));
+  const preferredByUuid = new Map();
+  for (const rule of rules) {
+    if (!rule.uuid) continue;
+    const preferred = preferredByUuid.get(rule.uuid);
+    if (!preferred || compareRecurrenceRuleForDedupe(rule, preferred) < 0) {
+      preferredByUuid.set(rule.uuid, rule);
+    }
+  }
+  let changed = false;
+  for (const rule of rules) {
+    const deletion = deletedByUuid.get(rule.uuid);
+    if (deletion && !rule.deletedAt) {
+      rule.deletedAt = deletion.deletedAt;
+      rule.updatedAt = new Date().toISOString();
+      await updateRecurrenceRule(rule);
+      changed = true;
+    } else if (!deletion && rule.uuid) {
+      const preferred = preferredByUuid.get(rule.uuid);
+      if (preferred.id !== rule.id) {
+        Object.assign(rule, { ...preferred, id: rule.id });
+        await updateRecurrenceRule(rule);
+        changed = true;
+      }
+    }
+  }
   // Tombstones from an earlier dedupe must not delete the surviving rule.
   const preferredByFingerprint = pickPreferredRecurrenceRules(rules.filter(rule => !rule.deletedAt));
   const now = new Date().toISOString();
-  let changed = false;
 
   for (const rule of rules) {
     const fingerprint = getRecurrenceRuleFingerprint(rule);
@@ -315,6 +343,11 @@ export async function dedupeLocalRecurrenceRules() {
     const preferred = preferredByFingerprint.get(fingerprint);
     if (!preferred || preferred.id === rule.id) continue;
     if (rule.deletedAt) continue;
+    // Same-UUID rows represent one identity; tombstoning just one would
+    // delete the survivor too. Keep the rows consistent instead.
+    if (preferred.uuid && preferred.uuid === rule.uuid) {
+      continue;
+    }
     await updateRecurrenceRule({
       ...rule,
       deletedAt: now,
@@ -1020,7 +1053,8 @@ async function syncRecurrenceRulesWithCloud(forcedUpdatedAt = null, pullFirst = 
   if (pullFirst) await pullRemoteRecurrenceRules(new Set());
   await dedupeLocalRecurrenceRules();
   const localRules = await getAllRecurrenceRules();
-  const effectiveLocalRules = localRules;
+  // PostgreSQL rejects an upsert batch that contains the same UUID twice.
+  const effectiveLocalRules = [...new Map(localRules.map(rule => [rule.uuid, rule])).values()];
 
   if (DEBUG) console.log('[sync] local recurrence rules', effectiveLocalRules.length);
   if (effectiveLocalRules.length) {
@@ -1162,6 +1196,7 @@ async function pullRemoteRecurrenceRules(updatedDates) {
   if (rulePullError) {
     if (!isMissingRecurrenceTable(rulePullError)) throw rulePullError;
   } else if (Array.isArray(ruleRows)) {
+    await dedupeLocalRecurrenceRules();
     if (DEBUG) console.log('[sync] pull recurrence rules', ruleRows.length);
     const remoteRules = ruleRows.map(mapRecurrenceRuleFromRemote);
     const localRulesBeforePull = await getAllRecurrenceRules();

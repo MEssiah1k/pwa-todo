@@ -42,6 +42,8 @@ function harness(initial, remoteInitial = [], todos = []) {
           select() { return this; }, order() { return this; },
           async range(start, end) { return { data: structuredClone(remote.slice(start, end + 1)), error: readError }; },
           async upsert(rows) {
+            assert.equal(new Set(rows.map(row => row.uuid)).size, rows.length,
+              'one upsert batch must contain each UUID only once');
             uploads.push(structuredClone(rows));
             for (const row of rows) {
               const index = remote.findIndex(r => r.uuid === row.uuid);
@@ -74,6 +76,27 @@ test('offline deletion survives newer cloud copy and repeated refreshes, and is 
   await h.pull();
   assert.equal(h.local[0].deletedAt, deletedAt);
   assert.equal(h.remote[0].deleted_at, deletedAt);
+});
+
+test('legacy local rows sharing a UUID propagate deletion to every copy and cloud', async () => {
+  const h = harness([
+    rule({ deletedAt, updatedAt: deletedAt }),
+    rule({ id: 2, updatedAt: newer })
+  ]);
+  h.remote.push(h.row(rule({ updatedAt: newer })));
+  await h.sync();
+  await h.sync();
+  assert.ok(h.local.every(item => item.deletedAt));
+  assert.equal(h.remote[0].deleted_at, deletedAt);
+});
+
+test('active legacy rows sharing a UUID upload once without deleting the rule', async () => {
+  const h = harness([rule(), rule({ id: 2, updatedAt: newer })]);
+  await h.sync();
+  await h.sync();
+  assert.ok(h.local.every(item => !item.deletedAt));
+  assert.equal(h.remote.length, 1);
+  assert.equal(h.remote[0].updated_at, newer);
 });
 
 test('cloud deletion beats a stale device edit even on push-only sync', async () => {
