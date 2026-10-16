@@ -36,13 +36,8 @@ import {
 } from './sync.js?v=20260923-rule-sync-quadrants-cloud-4';
 
 const input = document.getElementById('todo-input');
-const todoCategory = document.getElementById('todo-category');
 const todoQuadrant = document.getElementById('todo-quadrant');
 const dueInput = document.getElementById('todo-due');
-const todoFilterCategory = document.getElementById('todo-filter-category');
-const todoFilterPrevBtn = document.getElementById('todo-filter-prev');
-const todoFilterNextBtn = document.getElementById('todo-filter-next');
-const problemReviewOpenBtn = document.getElementById('problem-review-open');
 const addBtn = document.getElementById('add-btn');
 const quadrantLists = new Map(
   Array.from(document.querySelectorAll('.quadrant-list')).map(element => [element.dataset.quadrant, element])
@@ -51,13 +46,7 @@ const completedList = document.getElementById('completed-list');
 const completedModule = document.getElementById('completed-module');
 const status = document.getElementById('status');
 
-const summaryInput = document.getElementById('summary-input');
-const summaryStatus = document.getElementById('summary-status');
-const summaryRating = document.getElementById('summary-rating');
 const summaryModule = document.getElementById('summary-module');
-const timerTimelineChart = document.getElementById('timer-timeline-chart');
-const timerTimelineTitle = document.getElementById('timer-timeline-title');
-const timerTimelineSummary = document.getElementById('timer-timeline-summary');
 const contributionChart = document.getElementById('contribution-chart');
 const contributionSummary = document.getElementById('contribution-summary');
 const contributionTitle = document.getElementById('contribution-title');
@@ -76,12 +65,6 @@ const assistCustomInput = document.getElementById('assist-custom-input');
 const assistCustomCloseBtn = document.getElementById('assist-custom-close');
 const assistCustomCancelBtn = document.getElementById('assist-custom-cancel');
 const assistCustomConfirmBtn = document.getElementById('assist-custom-confirm');
-const problemReviewModal = document.getElementById('problem-review-modal');
-const problemReviewCloseBtn = document.getElementById('problem-review-close');
-const problemReviewProgress = document.getElementById('problem-review-progress');
-const problemReviewQuestion = document.getElementById('problem-review-question');
-const problemReviewInput = document.getElementById('problem-review-input');
-const problemReviewConfirmBtn = document.getElementById('problem-review-confirm');
 const prayerModal = document.getElementById('prayer-modal');
 const prayerTextEl = document.getElementById('prayer-text');
 const prayerConfirmBtn = document.getElementById('prayer-confirm');
@@ -100,7 +83,6 @@ const recurrenceOpenBtn = document.getElementById('recurrence-open');
 const recurrenceModal = document.getElementById('recurrence-modal');
 const recurrenceCloseBtn = document.getElementById('recurrence-close');
 const recurrenceList = document.getElementById('recurrence-list');
-const recurrenceCategory = document.getElementById('recurrence-category');
 const recurrenceQuadrant = document.getElementById('recurrence-quadrant');
 const recurrenceText = document.getElementById('recurrence-text');
 const recurrenceType = document.getElementById('recurrence-type');
@@ -118,7 +100,6 @@ const recurrenceChildrenChips = document.getElementById('recurrence-children-chi
 const recurrenceChildrenAdd = document.getElementById('recurrence-children-add');
 const recurrenceEditModal = document.getElementById('recurrence-edit-modal');
 const recurrenceEditCloseBtn = document.getElementById('recurrence-edit-close');
-const recurrenceEditCategory = document.getElementById('recurrence-edit-category');
 const recurrenceEditQuadrant = document.getElementById('recurrence-edit-quadrant');
 const recurrenceEditText = document.getElementById('recurrence-edit-text');
 const recurrenceEditType = document.getElementById('recurrence-edit-type');
@@ -210,8 +191,6 @@ let timelineEditingInitialSnapshot = '';
 let promptResolver = null;
 let promptDismissOnBackdrop = true;
 let assistCustomResolver = null;
-let problemReviewStepIndex = 0;
-let problemReviewAnswers = [];
 let daySettlementTimer = null;
 let contributionResizeRaf = 0;
 let contributionHalfKey = '';
@@ -221,12 +200,6 @@ const timerInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 let prayerResolver = null;
 let prayerCountdownTimer = null;
 let prayerShownTodayKey = createScopedStorageKey('pwaTodo.prayerShownToday');
-const PROBLEM_REVIEW_QUESTIONS = [
-  '1. 我现在应该推进的主方向是什么？',
-  '2. 在这个方向里，最卡我的点是什么？',
-  '3. 我现在能做的最小一步是什么？'
-];
-const TODO_FILTER_SEQUENCE = ['All', 'Work', 'Life', 'Health', 'Social', 'Growth', 'Leisure', 'Plan'];
 const TODO_QUADRANTS = ['q1', 'q2', 'q3', 'q4'];
 const DEFAULT_TODO_QUADRANT = 'q1';
 const TODO_QUADRANT_LABELS = {
@@ -399,132 +372,8 @@ function openAssistCustomModal(defaultValue = '') {
   });
 }
 
-function closeProblemReviewModal(reset = true) {
-  if (problemReviewModal) problemReviewModal.classList.add('hidden');
-  if (!reset) return;
-  problemReviewStepIndex = 0;
-  problemReviewAnswers = [];
-  if (problemReviewInput) problemReviewInput.value = '';
-}
-
-function renderProblemReviewStep() {
-  if (!problemReviewProgress || !problemReviewQuestion || !problemReviewInput) return;
-  const question = PROBLEM_REVIEW_QUESTIONS[problemReviewStepIndex] || '';
-  problemReviewProgress.textContent = `问题 ${problemReviewStepIndex + 1} / ${PROBLEM_REVIEW_QUESTIONS.length}`;
-  problemReviewQuestion.textContent = question;
-  problemReviewInput.value = problemReviewAnswers[problemReviewStepIndex] || '';
-  requestAnimationFrame(() => {
-    problemReviewInput.focus();
-    problemReviewInput.select();
-  });
-}
-
-function openProblemReviewModal() {
-  if (!problemReviewModal || !problemReviewInput) return;
-  problemReviewStepIndex = 0;
-  problemReviewAnswers = [];
-  problemReviewModal.classList.remove('hidden');
-  renderProblemReviewStep();
-}
-
-function submitProblemReviewStep() {
-  if (!problemReviewInput) return;
-  const answer = problemReviewInput.value.trim();
-  if (!answer) {
-    setStatus('请输入回答');
-    problemReviewInput.focus();
-    return;
-  }
-  problemReviewAnswers[problemReviewStepIndex] = answer;
-  if (problemReviewStepIndex >= PROBLEM_REVIEW_QUESTIONS.length - 1) {
-    void completeProblemReview();
-    return;
-  }
-  problemReviewStepIndex += 1;
-  renderProblemReviewStep();
-}
-
-function buildProblemReviewSummaryBlock(answers) {
-  return [
-    '【梳理问题】',
-    `1. 我现在应该推进的主方向是什么？`,
-    answers[0] || '',
-    '',
-    `2. 在这个方向里，最卡我的点是什么？`,
-    answers[1] || '',
-    '',
-    `3. 我现在能做的最小一步是什么？`,
-    answers[2] || ''
-  ].join('\n');
-}
-
-async function appendProblemReviewToTodaySummary(answers) {
-  const today = getTodayDateStr();
-  const now = new Date().toISOString();
-  const block = buildProblemReviewSummaryBlock(answers);
-  const todaySummaries = await getSummariesByDate(today);
-  const existing = todaySummaries
-    .filter(summary => !summary.deletedAt)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
-      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
-      return bTime - aTime;
-    })[0];
-
-  if (existing) {
-    const baseText = typeof existing.text === 'string' ? existing.text.trim() : '';
-    const nextText = baseText ? `${baseText}\n\n${block}` : block;
-    const nextSummary = {
-      ...existing,
-      text: nextText,
-      updatedAt: now,
-      deletedAt: null
-    };
-    await updateSummary(nextSummary);
-    if (selectedDate === today) {
-      summaries = summaries.map(summary =>
-        summary.id === nextSummary.id ? nextSummary : summary
-      );
-      summaryInput.value = nextText;
-      autoResizeSummary();
-    }
-  } else {
-    const initResult = syncInitPromise ? await syncInitPromise : null;
-    const userId = currentUserId ||
-      (initResult && initResult.userId ? initResult.userId : ensureUserId());
-    const nextSummary = {
-      date: today,
-      text: block,
-      rating: 0,
-      createdAt: now,
-      updatedAt: now,
-      deletedAt: null,
-      uuid: generateUUID(),
-      userId
-    };
-    const id = await addSummary(nextSummary);
-    if (selectedDate === today) {
-      summaries = [...summaries, { ...nextSummary, id }];
-      summaryInput.value = block;
-      autoResizeSummary();
-    }
-  }
-  triggerChangeSync();
-  await renderContributionChart();
-}
-
-async function completeProblemReview() {
-  const answers = [...problemReviewAnswers];
-  closeProblemReviewModal(true);
-  await appendProblemReviewToTodaySummary(answers);
-  setStatus('已完成梳理问题，并追加到今日总结');
-}
-
 function normalizeTodoPromptText(text) {
-  return String(text || '')
-    .trim()
-    .replace(/^[^:：]+[:：]\s*/, '')
-    .trim();
+  return getTodoText(text);
 }
 
 function shouldPromptMorningWakeup(todo) {
@@ -790,7 +639,7 @@ async function migrateParentIdToParentUuid() {
 }
 
 function normalizeTodoName(text) {
-  return typeof text === 'string' ? text.trim() : '';
+  return getTodoText(text);
 }
 
 function compareTodoKeepPriority(a, b) {
@@ -988,7 +837,6 @@ function renderTodos() {
   });
   if (completedList) completedList.innerHTML = '';
   runningTimeEls.clear();
-  const selectedCategoryFilter = todoFilterCategory ? todoFilterCategory.value : 'All';
   const activeTodos = todos.filter(todo => !todo.deletedAt);
 
   const childrenByParent = new Map();
@@ -1022,17 +870,10 @@ function renderTodos() {
     return { total, done };
   };
 
-  const matchesSelectedCategory = todo => {
-    if (selectedCategoryFilter === 'All') return true;
-    return parseCategorizedText(todo.text).category === selectedCategoryFilter;
-  };
-
   // Pending: root tasks that are incomplete themselves OR have incomplete children
   const pendingRoots = rootTodos.filter(t =>
     !t.completed || hasPendingChildren(t.uuid)
   ).sort(comparePendingTodos);
-
-  const visiblePendingRoots = pendingRoots.filter(matchesSelectedCategory);
 
   // Done: root tasks that are completed themselves OR have completed children
   const doneRoots = rootTodos.filter(t =>
@@ -1131,12 +972,6 @@ function renderTodos() {
     const mainRow = document.createElement('div');
     mainRow.className = 'todo-main';
 
-    const parsedTodo = parseCategorizedText(todo.text);
-    const category = document.createElement('span');
-    category.className = 'todo-category-badge';
-    category.textContent = parsedTodo.category;
-    mainRow.appendChild(category);
-
     if (isTodoQueued(todo)) {
       const pinnedBadge = document.createElement('span');
       pinnedBadge.className = 'todo-pin-badge';
@@ -1146,7 +981,7 @@ function renderTodos() {
 
     const text = document.createElement('span');
     text.className = 'todo-text';
-    text.textContent = parsedTodo.text;
+    text.textContent = getTodoText(todo.text);
     text.ondblclick = event => { event.stopPropagation(); beginTodoEdit(todo, li, mainRow, text); };
     mainRow.appendChild(text);
 
@@ -1289,7 +1124,7 @@ function renderTodos() {
   TODO_QUADRANTS.forEach(quadrant => {
     const quadrantList = quadrantLists.get(quadrant);
     if (!quadrantList) return;
-    const quadrantTodos = visiblePendingRoots
+    const quadrantTodos = pendingRoots
       .filter(todo => getTodoQuadrant(todo) === quadrant)
       .sort(compareQuadrantTodos);
     quadrantTodos.forEach(todo => renderTodoItem(todo, quadrantList, quadrant, false, getPendingChildren(todo.uuid)));
@@ -1305,51 +1140,6 @@ function renderTodos() {
   if (completedModule) {
     completedModule.classList.toggle('hidden', doneRoots.length === 0);
   }
-
-  if (todoFilterCategory) updateTodoFilterNavButtons(pendingRoots);
-}
-function getPendingTodoCountsByCategory(todoList = todos) {
-  const counts = new Map(TODO_FILTER_SEQUENCE.map(category => [category, 0]));
-  const pendingTodos = todoList.filter(todo => todo && !todo.deletedAt && !todo.completed);
-
-  counts.set('All', pendingTodos.length);
-  pendingTodos.forEach(todo => {
-    const category = parseCategorizedText(todo.text).category;
-    counts.set(category, (counts.get(category) || 0) + 1);
-  });
-
-  return counts;
-}
-
-function getNextTodoFilterCategory(direction, todoList = todos) {
-  if (!todoFilterCategory) return null;
-  const counts = getPendingTodoCountsByCategory(todoList);
-  const currentIndex = TODO_FILTER_SEQUENCE.indexOf(todoFilterCategory.value);
-  if (currentIndex < 0) return null;
-
-  for (let index = currentIndex + direction; index >= 0 && index < TODO_FILTER_SEQUENCE.length; index += direction) {
-    const category = TODO_FILTER_SEQUENCE[index];
-    if ((counts.get(category) || 0) > 0) return category;
-  }
-
-  return null;
-}
-
-function updateTodoFilterNavButtons(pendingTodos = null) {
-  const sourceTodos = Array.isArray(pendingTodos) ? pendingTodos : todos.filter(todo => todo && !todo.deletedAt && !todo.completed);
-  const previousCategory = getNextTodoFilterCategory(-1, sourceTodos);
-  const nextCategory = getNextTodoFilterCategory(1, sourceTodos);
-
-  if (todoFilterPrevBtn) todoFilterPrevBtn.disabled = !previousCategory;
-  if (todoFilterNextBtn) todoFilterNextBtn.disabled = !nextCategory;
-}
-
-function switchTodoFilter(direction) {
-  if (!todoFilterCategory) return;
-  const nextCategory = getNextTodoFilterCategory(direction);
-  if (!nextCategory) return;
-  todoFilterCategory.value = nextCategory;
-  renderTodos();
 }
 
 function isTodoInProgress(todo) {
@@ -1701,8 +1491,7 @@ function beginTodoEdit(todo, li, textContainer, textNode) {
   const inputEdit = document.createElement('input');
   inputEdit.className = 'edit-input';
   inputEdit.type = 'text';
-  const parsedTodo = parseCategorizedText(todo.text);
-  inputEdit.value = parsedTodo.text;
+  inputEdit.value = getTodoText(todo.text);
   textContainer.replaceChild(inputEdit, textNode);
   inputEdit.focus();
   inputEdit.setSelectionRange(inputEdit.value.length, inputEdit.value.length);
@@ -1716,7 +1505,7 @@ function beginTodoEdit(todo, li, textContainer, textNode) {
       loadTodos();
       return;
     }
-    const nextStoredText = formatTodoText(parsedTodo.category, nextText);
+    const nextStoredText = nextText;
     if (save && nextStoredText !== todo.text) {
       await updateTodo({
         ...todo,
@@ -1788,26 +1577,11 @@ function getNextQueuedSortOrder() {
   return Math.max(...queuedOrders) + 1;
 }
 
-function formatTodoText(category, text) {
-  const safeCategory = typeof category === 'string' && category.trim()
-    ? category.trim()
-    : 'Work';
-  return `${safeCategory}:${text}`;
-}
-
-function parseCategorizedText(text) {
+// Older task and recurrence records stored a category prefix in the title.
+// Read those titles without the prefix; new and edited titles are plain text.
+function getTodoText(text) {
   const raw = typeof text === 'string' ? text.trim() : '';
-  const match = raw.match(/^(Work|Life|Health|Social|Growth|Leisure|Plan):(.*)$/);
-  if (!match) {
-    return {
-      category: 'Work',
-      text: raw
-    };
-  }
-  return {
-    category: match[1],
-    text: match[2].trim()
-  };
+  return raw.replace(/^(Work|Life|Health|Social|Growth|Leisure|Plan):/, '').trim();
 }
 
 addBtn.onclick = async () => {
@@ -1829,7 +1603,7 @@ addBtn.onclick = async () => {
   const initResult = syncInitPromise ? await syncInitPromise : null;
   const userId = currentUserId ||
     (initResult && initResult.userId ? initResult.userId : ensureUserId());
-  const nextText = formatTodoText(todoCategory ? todoCategory.value : 'Work', text);
+  const nextText = text;
   if (await hasTodoWithSameText(selectedDate, nextText)) {
     setStatus('同一天已存在同名任务');
     return;
@@ -1869,297 +1643,11 @@ if (dueInput) {
   });
 }
 
-if (todoFilterCategory) {
-  todoFilterCategory.addEventListener('change', () => {
-    renderTodos();
-  });
-}
-
-if (todoFilterPrevBtn) {
-  todoFilterPrevBtn.addEventListener('click', () => {
-    switchTodoFilter(-1);
-  });
-}
-
-if (todoFilterNextBtn) {
-  todoFilterNextBtn.addEventListener('click', () => {
-    switchTodoFilter(1);
-  });
-}
-
 // -------- Summary logic --------
 async function loadSummaries() {
   summaries = await getSummariesByDate(selectedDate);
-  const latest = summaries
-    .filter(summary => !summary.deletedAt)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.updatedAt || a.createdAt || 0);
-      const bTime = Date.parse(b.updatedAt || b.createdAt || 0);
-      return bTime - aTime;
-    })[0];
-  summaryInput.value = latest ? latest.text : '';
-  summaryRatingValue = latest && typeof latest.rating === 'number' ? latest.rating : 0;
-  renderSummaryRating();
-  autoResizeSummary();
-  renderTimerTimeline();
+
   await renderContributionChart();
-}
-
-function getTimerTimelineSegmentsForDate(dateStr) {
-  const stored = Array.isArray(timerTimelineByDate[dateStr]) ? timerTimelineByDate[dateStr] : [];
-  const normalizeSegment = segment => {
-    const slices = Array.isArray(segment.slices) && segment.slices.length
-      ? segment.slices.map(slice => ({
-        startAt: slice.startAt,
-        endAt: slice.endAt
-      }))
-      : [{
-        startAt: segment.startAt,
-        endAt: segment.endAt
-      }];
-    const startAt = Math.min(...slices.map(slice => slice.startAt));
-    const endAt = Math.max(...slices.map(slice => slice.endAt));
-    return {
-      ...segment,
-      slices,
-      startAt,
-      endAt
-    };
-  };
-  const segments = stored.map((segment, index) => ({
-    ...normalizeSegment(segment),
-    _order: index
-  }));
-  if (activeTimerSegment && activeTimerSegment.date === dateStr) {
-    const now = Date.now();
-    const liveSlices = (activeTimerSegment.slices || []).map((slice, index, allSlices) => ({
-      startAt: slice.startAt,
-      endAt: activeTimerSegment.state === 'running' && index === allSlices.length - 1
-        ? now
-        : slice.endAt
-    }));
-    segments.push({
-      ...normalizeSegment({
-        ...activeTimerSegment,
-        slices: liveSlices
-      }),
-      _order: stored.length
-    });
-  }
-  return segments.sort((a, b) => {
-    const aSeq = Number.isFinite(a.sequence) ? a.sequence : Number.MAX_SAFE_INTEGER;
-    const bSeq = Number.isFinite(b.sequence) ? b.sequence : Number.MAX_SAFE_INTEGER;
-    if (aSeq !== bSeq) return aSeq - bSeq;
-    return (a._order || 0) - (b._order || 0);
-  });
-}
-
-function allocateTimelineLanes(segments) {
-  return segments.map((segment, index) => ({
-    ...segment,
-    laneIndex: index,
-    endAt: Math.max(segment.endAt || segment.startAt, segment.startAt + 60000)
-  }));
-}
-
-function getTimelineStateLabel(state) {
-  if (state === 'completed') return '自然完成';
-  if (state === 'stopped') return '手动结束';
-  if (state === 'paused') return '暂停中断';
-  if (state === 'running') return '进行中';
-  return '已记录';
-}
-
-function buildTimelineTooltip(segment) {
-  const durationMs = (segment.slices || []).reduce(
-    (sum, slice) => sum + Math.max(0, slice.endAt - slice.startAt),
-    0
-  );
-  return [
-    `${formatTooltipDate(segment.date)} · 第 ${segment.sequence} 段`,
-    `开始：${formatClockTime(segment.startAt)}`,
-    `结束：${formatClockTime(segment.endAt)}`,
-    `时长：${formatDurationText(durationMs)}`,
-    `片段：${(segment.slices || []).length} 段`,
-    `状态：${getTimelineStateLabel(segment.state)}`
-  ].join('\n');
-}
-
-function renderTimerTimeline() {
-  if (!timerTimelineChart) return;
-  const timelineDate = selectedDate;
-  const segments = allocateTimelineLanes(getTimerTimelineSegmentsForDate(timelineDate));
-  const dayStartMs = getDateStartMs(timelineDate);
-  const dayEndMs = getDateEndMs(timelineDate);
-
-  if (timerTimelineTitle) {
-    timerTimelineTitle.textContent = `${formatTooltipDate(timelineDate)}工作时间段`;
-  }
-
-  if (!segments.length) {
-    timerTimelineChart.replaceChildren(Object.assign(document.createElement('div'), {
-      className: 'timeline-empty',
-      textContent: timelineDate === getTodayDateStr()
-        ? '今天还没有记录到倒计时时间段'
-        : '这一天还没有记录到时间段'
-    }));
-    if (timerTimelineSummary) timerTimelineSummary.textContent = '';
-    return;
-  }
-
-  const minStart = Math.max(dayStartMs, Math.min(...segments.map(segment => segment.startAt)));
-  const maxEnd = Math.min(dayEndMs, Math.max(...segments.map(segment => segment.endAt)));
-  const paddingMs = 15 * 60 * 1000;
-  let axisStart = Math.max(dayStartMs, minStart - paddingMs);
-  let axisEnd = Math.min(dayEndMs, maxEnd + paddingMs);
-  if (axisEnd - axisStart < 60 * 60 * 1000) {
-    const center = (axisStart + axisEnd) / 2;
-    axisStart = Math.max(dayStartMs, center - 30 * 60 * 1000);
-    axisEnd = Math.min(dayEndMs, center + 30 * 60 * 1000);
-  }
-  const axisDuration = Math.max(60 * 1000, axisEnd - axisStart);
-  const tickCount = 5;
-
-  const axis = document.createElement('div');
-  axis.className = 'timeline-axis';
-  axis.style.setProperty('--timeline-ticks', String(tickCount));
-  for (let index = 0; index < tickCount; index += 1) {
-    const label = document.createElement('span');
-    const ratio = tickCount === 1 ? 0 : index / (tickCount - 1);
-    label.textContent = formatClockTime(axisStart + axisDuration * ratio);
-    axis.appendChild(label);
-  }
-
-  const body = document.createElement('div');
-  body.className = 'timeline-body';
-
-  const grid = document.createElement('div');
-  grid.className = 'timeline-grid';
-  grid.style.setProperty('--timeline-ticks', String(tickCount));
-  for (let index = 0; index < tickCount; index += 1) {
-    grid.appendChild(document.createElement('span'));
-  }
-
-  const lanes = document.createElement('div');
-  lanes.className = 'timeline-lanes';
-  const laneCount = Math.max(...segments.map(segment => segment.laneIndex)) + 1;
-  const laneEls = Array.from({ length: laneCount }, () => {
-    const lane = document.createElement('div');
-    lane.className = 'timeline-lane';
-    lanes.appendChild(lane);
-    return lane;
-  });
-
-  const tooltip = document.createElement('div');
-  tooltip.className = 'timeline-tooltip';
-  tooltip.setAttribute('role', 'status');
-  tooltip.setAttribute('aria-live', 'polite');
-
-  const hideTooltip = () => {
-    tooltip.classList.remove('is-visible');
-  };
-
-  const showTooltip = (button, text) => {
-    const chartRect = timerTimelineChart.getBoundingClientRect();
-    const buttonRect = button.getBoundingClientRect();
-    tooltip.textContent = text;
-    tooltip.classList.add('is-visible');
-    const tooltipWidth = tooltip.offsetWidth;
-    const tooltipHeight = tooltip.offsetHeight;
-    const maxLeft = Math.max(4, chartRect.width - tooltipWidth - 4);
-    const left = Math.min(
-      maxLeft,
-      Math.max(4, buttonRect.left - chartRect.left + buttonRect.width / 2 - tooltipWidth / 2)
-    );
-    const belowTop = buttonRect.bottom - chartRect.top + 10;
-    const aboveTop = buttonRect.top - chartRect.top - tooltipHeight - 10;
-    const maxTop = Math.max(4, chartRect.height - tooltipHeight - 4);
-    const top = belowTop <= maxTop ? belowTop : Math.max(4, aboveTop);
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  };
-
-  segments.forEach(segment => {
-    const lane = laneEls[segment.laneIndex];
-    const tooltipText = buildTimelineTooltip(segment);
-    lane.replaceChildren();
-    lane.classList.remove('is-hovered');
-
-    if (segment.state !== 'running') {
-      const editBtn = document.createElement('button');
-      editBtn.type = 'button';
-      editBtn.className = 'progress-btn timeline-edit-btn';
-      editBtn.textContent = '修改';
-      editBtn.addEventListener('click', event => {
-        event.stopPropagation();
-        hideTooltip();
-        openTimelineEditModal(segment);
-      });
-      lane.appendChild(editBtn);
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.type = 'button';
-      deleteBtn.className = 'delete-btn timeline-delete-btn';
-      deleteBtn.textContent = '删除';
-      deleteBtn.addEventListener('click', event => {
-        event.stopPropagation();
-        hideTooltip();
-        deleteTimerTimelineSegment(segment.id);
-      });
-      lane.appendChild(deleteBtn);
-
-      lane.addEventListener('mouseenter', () => {
-        lane.classList.add('is-hovered');
-      });
-      lane.addEventListener('mouseleave', () => {
-        lane.classList.remove('is-hovered');
-      });
-      lane.addEventListener('focusin', () => {
-        lane.classList.add('is-hovered');
-      });
-      lane.addEventListener('focusout', () => {
-        if (!lane.contains(document.activeElement)) {
-          lane.classList.remove('is-hovered');
-        }
-      });
-    }
-
-    (segment.slices || []).forEach((slice, index, allSlices) => {
-      const startRatio = Math.max(0, Math.min(1, (slice.startAt - axisStart) / axisDuration));
-      const endRatio = Math.max(0, Math.min(1, (slice.endAt - axisStart) / axisDuration));
-      const left = startRatio * 100;
-      const width = Math.max(0, (endRatio - startRatio) * 100);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'timeline-segment';
-      button.dataset.state = segment.state;
-      button.style.left = `${left}%`;
-      button.style.width = `${width}%`;
-      button.style.backgroundColor = segment.color;
-      if (segment.state === 'paused' && index < allSlices.length - 1) {
-        button.classList.add('is-interrupted');
-      }
-      button.setAttribute('aria-label', tooltipText.replace(/\n/g, '，'));
-      button.addEventListener('mouseenter', () => showTooltip(button, tooltipText));
-      button.addEventListener('focus', () => showTooltip(button, tooltipText));
-      button.addEventListener('mouseleave', hideTooltip);
-      button.addEventListener('blur', hideTooltip);
-      lane.appendChild(button);
-    });
-  });
-
-  body.appendChild(grid);
-  body.appendChild(lanes);
-
-  const totalDurationMs = segments.reduce(
-    (sum, segment) => sum + (segment.slices || []).reduce(
-      (sliceSum, slice) => sliceSum + Math.max(0, slice.endAt - slice.startAt),
-      0
-    ),
-    0
-  );
-  timerTimelineChart.replaceChildren(axis, body, tooltip);
-  if (timerTimelineSummary) timerTimelineSummary.textContent = '';
 }
 
 async function renderContributionChart() {
@@ -2460,7 +1948,6 @@ async function addRecurrenceSkip(dateStr, ruleId) {
 }
 
 function resetRecurrenceForm() {
-  if (recurrenceCategory) recurrenceCategory.value = 'Work';
   if (recurrenceQuadrant) recurrenceQuadrant.value = DEFAULT_TODO_QUADRANT;
   if (recurrenceText) recurrenceText.value = '';
   if (recurrenceType) recurrenceType.value = 'daily';
@@ -2482,7 +1969,6 @@ function resetRecurrenceForm() {
 
 function resetRecurrenceEditForm() {
   editingRecurrenceRuleId = null;
-  if (recurrenceEditCategory) recurrenceEditCategory.value = 'Work';
   if (recurrenceEditQuadrant) recurrenceEditQuadrant.value = DEFAULT_TODO_QUADRANT;
   if (recurrenceEditText) recurrenceEditText.value = '';
   if (recurrenceEditType) recurrenceEditType.value = 'daily';
@@ -2505,14 +1991,12 @@ function resetRecurrenceEditForm() {
 function fillRecurrenceEditForm(rule) {
   if (!rule) return;
   editingRecurrenceRuleId = rule.id;
-  const parsed = parseCategorizedText(rule.text);
-  if (recurrenceEditCategory) recurrenceEditCategory.value = parsed.category;
   if (recurrenceEditQuadrant) {
     recurrenceEditQuadrant.value = TODO_QUADRANTS.includes(rule.quadrant)
       ? rule.quadrant
       : DEFAULT_TODO_QUADRANT;
   }
-  if (recurrenceEditText) recurrenceEditText.value = parsed.text;
+  if (recurrenceEditText) recurrenceEditText.value = getTodoText(rule.text);
   if (recurrenceEditType) recurrenceEditType.value = rule.type || 'daily';
   if (recurrenceEditInterval) recurrenceEditInterval.value = String(rule.interval || 1);
   if (recurrenceEditUnit) recurrenceEditUnit.value = rule.unit || 'day';
@@ -2586,7 +2070,7 @@ function collectRecurrenceFormValue(fields) {
     day = Number(fields.day.value);
   }
   return {
-    text: formatTodoText(fields.category ? fields.category.value : 'Work', text),
+    text,
     quadrant: fields.quadrant && TODO_QUADRANTS.includes(fields.quadrant.value)
       ? fields.quadrant.value
       : DEFAULT_TODO_QUADRANT,
@@ -2609,7 +2093,7 @@ function renderRecurrenceRules() {
     const text = document.createElement('span');
     text.className = 'recurrence-text';
     const quadrant = TODO_QUADRANTS.includes(rule.quadrant) ? rule.quadrant : DEFAULT_TODO_QUADRANT;
-    text.textContent = `${rule.text} · ${TODO_QUADRANT_LABELS[quadrant]} · ${formatRecurrence(rule)}`;
+    text.textContent = `${getTodoText(rule.text)} · ${TODO_QUADRANT_LABELS[quadrant]} · ${formatRecurrence(rule)}`;
 
     const info = document.createElement('div');
     info.className = 'recurrence-info';
@@ -2756,7 +2240,7 @@ async function ensureRecurrenceForDate(dateStr) {
   const normalizedNames = new Set(
     todosForDate
       .filter(todo => !todo.deletedAt)
-      .map(todo => (typeof todo.text === 'string' ? todo.text.trim() : ''))
+      .map(todo => getTodoText(todo.text))
       .filter(Boolean)
   );
   const existingRuleIds = new Set(
@@ -2770,7 +2254,7 @@ async function ensureRecurrenceForDate(dateStr) {
     if (!dateMatchesRule(dateStr, rule)) continue;
     if (skippedRuleIds.has(rule.id)) continue;
     if (existingRuleIds.has(rule.id)) continue;
-    const ruleText = typeof rule.text === 'string' ? rule.text.trim() : '';
+    const ruleText = getTodoText(rule.text);
     if (ruleText && normalizedNames.has(ruleText)) continue;
     const initResult = syncInitPromise ? await syncInitPromise : null;
     const userId = currentUserId ||
@@ -2778,7 +2262,7 @@ async function ensureRecurrenceForDate(dateStr) {
     const parentUuid = generateUUID();
     await addTodo({
       date: dateStr,
-      text: rule.text,
+      text: getTodoText(rule.text),
       completed: false,
       createdAt: now,
       updatedAt: now,
@@ -2792,12 +2276,11 @@ async function ensureRecurrenceForDate(dateStr) {
     });
     // Generate child tasks from rule template
     if (Array.isArray(rule.children) && rule.children.length) {
-      const parsed = parseCategorizedText(rule.text);
       for (const childText of rule.children) {
         if (!childText) continue;
         await addTodo({
           date: dateStr,
-          text: formatTodoText(parsed.category, childText),
+          text: childText.trim(),
           completed: false,
           parentUuid,
           createdAt: now,
@@ -2902,7 +2385,6 @@ if (recurrenceAddBtn) {
   recurrenceAddBtn.addEventListener('click', async () => {
     const now = new Date().toISOString();
     const rule = collectRecurrenceFormValue({
-      category: recurrenceCategory,
       quadrant: recurrenceQuadrant,
       text: recurrenceText,
       type: recurrenceType,
@@ -2945,7 +2427,6 @@ if (recurrenceEditSaveBtn) {
     }
     const now = new Date().toISOString();
     const rule = collectRecurrenceFormValue({
-      category: recurrenceEditCategory,
       quadrant: recurrenceEditQuadrant,
       text: recurrenceEditText,
       type: recurrenceEditType,
@@ -3021,51 +2502,8 @@ if (recurrenceEditModal) {
   });
 }
 
-function setSummaryStatus(message) {
-  if (!summaryStatus) return;
-  summaryStatus.textContent = message;
-  if (message) {
-    setTimeout(() => {
-      if (summaryStatus.textContent === message) summaryStatus.textContent = '';
-    }, 1500);
-  }
-}
-
 if (recurrenceCustom) resetRecurrenceForm();
 if (recurrenceEditCustom) resetRecurrenceEditForm();
-
-function renderSummaryRating() {
-  if (!summaryRating) return;
-  const stars = summaryRating.querySelectorAll('.star');
-  stars.forEach(star => {
-    const index = Number(star.dataset.star);
-    star.classList.remove('half', 'full');
-    if (summaryRatingValue >= index) {
-      star.classList.add('full');
-    } else if (summaryRatingValue >= index - 0.5) {
-      star.classList.add('half');
-    }
-  });
-}
-
-if (summaryRating) {
-  summaryRating.addEventListener('click', event => {
-    const target = event.target.closest('.star');
-    if (!target) return;
-    const index = Number(target.dataset.star);
-    summaryRatingValue = index - 0.5;
-    renderSummaryRating();
-    scheduleSummarySave();
-  });
-  summaryRating.addEventListener('dblclick', event => {
-    const target = event.target.closest('.star');
-    if (!target) return;
-    const index = Number(target.dataset.star);
-    summaryRatingValue = index;
-    renderSummaryRating();
-    scheduleSummarySave();
-  });
-}
 
 function buildRecurrenceDateOptions() {
   if (recurrenceDay) {
@@ -3126,9 +2564,7 @@ function buildRecurrenceDateOptions() {
 
 buildRecurrenceDateOptions();
 
-let summarySaveTimer = null;
 let themeDark = true;
-let summaryRatingValue = 0;
 let bgmName = 'pinknoise';
 let syncReady = false;
 let currentUserId = null;
@@ -3268,12 +2704,6 @@ async function restoreTheme() {
 
 restoreTheme();
 
-function autoResizeSummary() {
-  if (!summaryInput) return;
-  summaryInput.style.height = 'auto';
-  summaryInput.style.height = `${summaryInput.scrollHeight}px`;
-}
-
 function getLatestSummaryRecord(summaryList = summaries) {
   return summaryList
     .filter(summary => !summary.deletedAt)
@@ -3305,9 +2735,9 @@ async function addAutoSummaryRatingForTimer(dateStr, durationMs) {
       summaries = summaries.map(summary =>
         summary.id === nextSummary.id ? nextSummary : summary
       );
-      summaryRatingValue = nextRating;
-      renderSummaryRating();
-      setSummaryStatus('已自动加 0.5 星');
+
+
+
     }
     triggerChangeSync();
     await renderContributionChart();
@@ -3330,90 +2760,13 @@ async function addAutoSummaryRatingForTimer(dateStr, durationMs) {
   const id = await addSummary(nextSummary);
   if (dateStr === selectedDate) {
     summaries = [...summaries, { ...nextSummary, id }];
-    summaryRatingValue = nextSummary.rating;
-    renderSummaryRating();
-    setSummaryStatus('已自动加 0.5 星');
+
+
+
   }
   triggerChangeSync();
   await renderContributionChart();
 }
-
-function scheduleSummarySave() {
-  if (summarySaveTimer) clearTimeout(summarySaveTimer);
-  summarySaveTimer = setTimeout(saveSummaryNow, 2000);
-}
-
-async function saveSummaryNow() {
-  if (summarySaveTimer) {
-    clearTimeout(summarySaveTimer);
-    summarySaveTimer = null;
-  }
-  const text = summaryInput.value.trim();
-  const now = new Date().toISOString();
-  const existing = getLatestSummaryRecord();
-
-  if (!text && summaryRatingValue === 0) {
-    if (existing) {
-      const nextSummary = {
-        ...existing,
-        deletedAt: now,
-        updatedAt: now
-      };
-      await updateSummary(nextSummary);
-      summaries = summaries.map(summary =>
-        summary.id === nextSummary.id ? nextSummary : summary
-      );
-      triggerChangeSync();
-      setSummaryStatus('已清空');
-      await renderContributionChart();
-    }
-    return;
-  }
-
-  if (existing) {
-    const nextSummary = {
-      ...existing,
-      text,
-      rating: summaryRatingValue,
-      updatedAt: now,
-      deletedAt: null
-    };
-    await updateSummary(nextSummary);
-    summaries = summaries.map(summary =>
-      summary.id === nextSummary.id ? nextSummary : summary
-    );
-    triggerChangeSync();
-  } else {
-    const initResult = syncInitPromise ? await syncInitPromise : null;
-    const userId = currentUserId ||
-      (initResult && initResult.userId ? initResult.userId : ensureUserId());
-    const nextSummary = {
-      date: selectedDate,
-      text,
-      rating: summaryRatingValue,
-      createdAt: now,
-      updatedAt: now,
-      deletedAt: null,
-      uuid: generateUUID(),
-      userId
-    };
-    const id = await addSummary(nextSummary);
-    summaries = [...summaries, { ...nextSummary, id }];
-    triggerChangeSync();
-  }
-  setSummaryStatus('已保存');
-  await renderContributionChart();
-}
-
-
-summaryInput.addEventListener('input', () => {
-  autoResizeSummary();
-  scheduleSummarySave();
-});
-
-summaryInput.addEventListener('blur', () => {
-  void saveSummaryNow();
-});
 
 // -------- Date module --------
 async function loadForDate() {
@@ -3561,7 +2914,7 @@ async function restoreTimerTimeline() {
     const activeRecord = await getMeta(TIMER_TIMELINE_ACTIVE_META_KEY);
     activeTimerSegment = activeRecord ? activeRecord.value : null;
   }
-  renderTimerTimeline();
+
 }
 
 function startTimerTimelineSegment(now = Date.now()) {
@@ -3580,7 +2933,7 @@ function startTimerTimelineSegment(now = Date.now()) {
     };
     void persistActiveTimerSegment();
     triggerChangeSync();
-    renderTimerTimeline();
+
     return;
   }
   const sequence = getTimerTimelineSequence(dateStr);
@@ -3597,7 +2950,7 @@ function startTimerTimelineSegment(now = Date.now()) {
   };
   void persistActiveTimerSegment();
   triggerChangeSync();
-  renderTimerTimeline();
+
 }
 
 function pauseTimerTimelineSegment(endAt = Date.now()) {
@@ -3619,7 +2972,7 @@ function pauseTimerTimelineSegment(endAt = Date.now()) {
   };
   void persistActiveTimerSegment();
   triggerChangeSync();
-  renderTimerTimeline();
+
 }
 
 function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
@@ -3660,7 +3013,7 @@ function finalizeTimerTimelineSegment(state, endAt = Date.now()) {
     void addAutoSummaryRatingForTimer(segment.date, durationMs);
   }
   triggerChangeSync();
-  renderTimerTimeline();
+
 }
 
 function deleteTimerTimelineSegment(segmentId) {
@@ -3677,7 +3030,7 @@ function deleteTimerTimelineSegment(segmentId) {
     activeTimerSegment = null;
     void persistActiveTimerSegment();
     triggerChangeSync();
-    renderTimerTimeline();
+
     return;
   }
 
@@ -3696,7 +3049,7 @@ function deleteTimerTimelineSegment(segmentId) {
     await persistTimerTimelineHistory();
     await markTimerTimelineManualDelete(segmentId);
     triggerChangeSync();
-    renderTimerTimeline();
+
   })();
 }
 
@@ -3828,7 +3181,7 @@ async function saveTimelineEditModal() {
     activeTimerSegment = updateSegment(activeTimerSegment);
     await persistActiveTimerSegment();
     triggerChangeSync();
-    renderTimerTimeline();
+
     closeTimelineEditModal();
     return;
   }
@@ -3849,7 +3202,7 @@ async function saveTimelineEditModal() {
   await persistTimerTimelineHistory();
   await markTimerTimelineManualEdit(timelineEditingSegmentId);
   triggerChangeSync();
-  renderTimerTimeline();
+
   closeTimelineEditModal();
 }
 
@@ -4381,7 +3734,7 @@ function tickTimer() {
       bellPhase.state = 'work';
       bellPhase.nextBellAt = now + randomBellSeconds() * 1000;
       playTone(900, 180);
-      renderTimerTimeline();
+
     }
     return;
   }
@@ -4392,7 +3745,7 @@ function tickTimer() {
     bellPhase.state = 'rest';
     bellPhase.restEndsAt = now + 10000;
     playTone(420, 180);
-    renderTimerTimeline();
+
   }
 
   if (now - lastPersistAt > 5000) {
@@ -5015,41 +4368,6 @@ if (assistCustomModal) {
   });
 }
 
-if (problemReviewOpenBtn) {
-  problemReviewOpenBtn.addEventListener('click', () => {
-    openProblemReviewModal();
-  });
-}
-
-if (problemReviewCloseBtn) {
-  problemReviewCloseBtn.addEventListener('click', () => {
-    closeProblemReviewModal(true);
-  });
-}
-
-if (problemReviewConfirmBtn) {
-  problemReviewConfirmBtn.addEventListener('click', () => {
-    submitProblemReviewStep();
-  });
-}
-
-if (problemReviewInput) {
-  problemReviewInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-      submitProblemReviewStep();
-    }
-    if (event.key === 'Escape') {
-      closeProblemReviewModal(true);
-    }
-  });
-}
-
-if (problemReviewModal) {
-  problemReviewModal.addEventListener('click', event => {
-    if (event.target === problemReviewModal) closeProblemReviewModal(true);
-  });
-}
-
 // Prayer modal
 if (prayerConfirmBtn) {
   prayerConfirmBtn.addEventListener('click', () => {
@@ -5147,7 +4465,7 @@ async function restoreTimerState() {
 
   updateTimerUI(timerRemainingMs);
   updateToggleLabel();
-  renderTimerTimeline();
+
   bgm.stop();
   releaseTimerLease();
   clearTimerTicking();
@@ -5179,7 +4497,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20260923-quadrants-12', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20261016-remove-timeline-4', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();
