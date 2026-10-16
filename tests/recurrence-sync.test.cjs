@@ -20,6 +20,7 @@ function harness(initial, remoteInitial = [], todos = []) {
   const local = structuredClone(initial);
   const remote = structuredClone(remoteInitial);
   const uploads = [];
+  const remoteTodos = [];
   let readError = null;
   const context = vm.createContext({
     console: { log() {}, warn() {} }, crypto: require('node:crypto').webcrypto,
@@ -35,20 +36,27 @@ function harness(initial, remoteInitial = [], todos = []) {
     getAllTodos: async () => structuredClone(todos), getAllSummaries: async () => [],
     getTodosByRuleId: async id => structuredClone(todos.filter(t => t.recurrenceRuleId === id)),
     updateTodo: async value => { todos[todos.findIndex(t => t.id === value.id)] = value; },
+    addTodo: async value => {
+      const id = Math.max(0, ...todos.map(t => t.id)) + 1;
+      todos.push({ ...value, id });
+      return id;
+    },
+    getTodosUpdatedAfter: async iso => structuredClone(todos.filter(t => (t.updatedAt || '') > iso)),
     client: {
       from(table) {
-        assert.equal(table, 'recurrence_rules');
+        const tableRows = table === 'recurrence_rules' ? remote : table === 'todos' ? remoteTodos : [];
         return {
-          select() { return this; }, order() { return this; },
-          async range(start, end) { return { data: structuredClone(remote.slice(start, end + 1)), error: readError }; },
+          select() { return this; }, order() { return this; }, in() { return this; },
+          then(resolve, reject) { return Promise.resolve({ data: structuredClone(tableRows), error: readError }).then(resolve, reject); },
+          async range(start, end) { return { data: structuredClone(tableRows.slice(start, end + 1)), error: readError }; },
           async upsert(rows) {
             assert.equal(new Set(rows.map(row => row.uuid)).size, rows.length,
               'one upsert batch must contain each UUID only once');
             uploads.push(structuredClone(rows));
             for (const row of rows) {
-              const index = remote.findIndex(r => r.uuid === row.uuid);
-              if (index < 0) remote.push({ ...row });
-              else remote[index] = { ...row };
+              const index = tableRows.findIndex(r => r.uuid === row.uuid);
+              if (index < 0) tableRows.push({ ...row });
+              else tableRows[index] = { ...row };
             }
             return { error: null };
           }
@@ -58,7 +66,7 @@ function harness(initial, remoteInitial = [], todos = []) {
   });
   vm.runInContext(source + '\nsupabase = client;', context);
   return {
-    local, remote, uploads,
+    local, remote, uploads, remoteTodos,
     row: value => context.mapRecurrenceRuleToRemote(value),
     pull: () => context.pullRemoteRecurrenceRules(new Set()),
     sync: () => context.syncRecurrenceRulesWithCloud(),
@@ -276,4 +284,46 @@ test('newer remote quadrant wins while newer local quadrant is preserved', () =>
   const localWinner = h.context.mergeTodoForPull(newestLocal, newerRemote);
   assert.equal(localWinner.quadrant, 'q2');
   assert.equal(localWinner.quadrantOrder, 1);
+});
+
+test('deleted standalone cloud task is not reinserted and its deletion is uploaded', async () => {
+  const date = new Date().toISOString().slice(0, 10);
+  const todos = [{ id: 1, uuid: 'orphan-task', date, text: 'Old recurring task',
+    completed: false, createdAt, updatedAt: deletedAt, deletedAt }];
+  const h = harness([], [], todos);
+  h.remoteTodos.push(h.context.mapTodoToRemote({ ...todos[0], deletedAt: null, updatedAt: newer }));
+  await h.context.pullRemoteChanges();
+  assert.equal(todos.length, 1);
+  assert.equal(todos[0].deletedAt, deletedAt);
+  await h.context.pushLocalTodos(newer);
+  assert.equal(h.remoteTodos[0].deleted_at, deletedAt);
+  await h.context.pullRemoteChanges();
+  assert.equal(todos.length, 1);
+  assert.equal(todos[0].deletedAt, deletedAt);
+});
+
+test('previously resurrected UUID copies are repaired without removing a new same-name task', async () => {
+  const date = new Date().toISOString().slice(0, 10);
+  const base = { date, text: 'Old recurring task', completed: false, createdAt };
+  const todos = [
+    { ...base, id: 1, uuid: 'orphan-task', updatedAt: deletedAt, deletedAt },
+    { ...base, id: 2, uuid: 'orphan-task', updatedAt: newer, deletedAt: null }
+  ];
+  const h = harness([], [], todos);
+  h.remoteTodos.push(h.context.mapTodoToRemote({ ...todos[1] }));
+  h.remoteTodos.push(h.context.mapTodoToRemote({ ...base, uuid: 'new-task', updatedAt: newer, deletedAt: null }));
+  await h.context.pullRemoteChanges();
+  assert.ok(todos.filter(t => t.uuid === 'orphan-task').every(t => t.deletedAt));
+  assert.equal(todos.find(t => t.uuid === 'new-task').deletedAt, null);
+});
+
+test('task upload chooses a UUID tombstone over its newer active duplicate', () => {
+  const h = harness([]);
+  const deleted = { id: 1, uuid: 'same', deletedAt, updatedAt: deletedAt };
+  const active = { id: 2, uuid: 'same', deletedAt: null, updatedAt: newer };
+  for (const rows of [[deleted, active], [active, deleted]]) {
+    const result = h.context.dedupeTodosForPush(rows);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].deletedAt, deletedAt);
+  }
 });

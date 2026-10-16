@@ -73,3 +73,12 @@ test('legacy tombstones without a UUID can still be normalized for upload', asyn
   assert.equal(h.rows[0].uuid, 'generated');
   assert.equal(h.rows[0].deletedAt, '2026-01-01');
 });
+
+test('a task deletion survives an in-flight sync or edit writing its stale snapshot', async () => {
+  const original = { id: 1, uuid: 'task', text: 'old', deletedAt: null };
+  const h = harness([original]);
+  await h.context.updateTodo({ ...original, deletedAt: '2026-10-16', updatedAt: '2026-10-16' });
+  await h.context.updateTodo({ ...original, text: 'stale edit', updatedAt: '2999-01-01' });
+  assert.equal(h.rows[0].deletedAt, '2026-10-16');
+  assert.equal(h.rows[0].text, 'old');
+});

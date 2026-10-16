@@ -296,9 +296,18 @@ export async function updateTodo(todo) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const req = store.put(todo);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    const req = store.get(todo.id);
+    req.onsuccess = () => {
+      const current = req.result;
+      store.put(current && current.deletedAt ? {
+        ...current,
+        uuid: current.uuid || todo.uuid,
+        updatedAt: [current.updatedAt || '', todo.updatedAt || ''].sort().pop()
+      } : todo);
+    };
+    tx.oncomplete = () => resolve(todo.id);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('任务保存失败'));
   });
 }
 

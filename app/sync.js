@@ -19,7 +19,7 @@ import {
   updateSummary,
   addRecurrenceRule,
   updateRecurrenceRule
-} from './db.js?v=20261016-recurrence-delete-1';
+} from './db.js?v=20261016-task-tombstone-2';
 import {
   createScopedStorageKey,
   migrateLegacyLocalStorageKeys
@@ -1101,19 +1101,33 @@ export async function pullRemoteChanges() {
   const localByFingerprint = new Map();
 
   for (const todo of localTodos) {
-    if (!todo || todo.deletedAt) continue;
+    if (!todo) continue;
     if (todo.uuid) {
       const existing = localByUuid.get(todo.uuid);
-      if (!existing || (todo.updatedAt || '') > (existing.updatedAt || '')) {
+      if (!existing ||
+          (todo.deletedAt && !existing.deletedAt) ||
+          (Boolean(todo.deletedAt) === Boolean(existing.deletedAt) &&
+            (todo.updatedAt || '') > (existing.updatedAt || ''))) {
         localByUuid.set(todo.uuid, todo);
       }
     }
-    {
-      const key = getTodoFingerprint(todo);
-      const existingByKey = localByFingerprint.get(key);
-      if (!existingByKey || (todo.updatedAt || '') > (existingByKey.updatedAt || '')) {
-        localByFingerprint.set(key, todo);
-      }
+  }
+
+  // Older pulls inserted a second local row instead of matching a tombstone.
+  // Repair those exact-UUID copies without deleting unrelated same-name tasks.
+  for (const todo of localTodos) {
+    const deletion = todo && todo.uuid ? localByUuid.get(todo.uuid) : null;
+    if (!deletion || !deletion.deletedAt || todo.deletedAt) continue;
+    Object.assign(todo, { deletedAt: deletion.deletedAt, updatedAt: new Date().toISOString() });
+    await updateTodo(todo);
+    updatedDates.add(todo.date);
+  }
+  for (const todo of localTodos) {
+    if (!todo || todo.deletedAt) continue;
+    const key = getTodoFingerprint(todo);
+    const existing = localByFingerprint.get(key);
+    if (!existing || (todo.updatedAt || '') > (existing.updatedAt || '')) {
+      localByFingerprint.set(key, todo);
     }
   }
 
@@ -1123,7 +1137,8 @@ export async function pullRemoteChanges() {
     for (const row of todoRows) {
       const remote = mapTodoFromRemote(row);
       const byUuid = remote.uuid ? localByUuid.get(remote.uuid) : null;
-      const byFingerprint = localByFingerprint.get(getTodoFingerprint(remote)) || null;
+      const fingerprintMatch = localByFingerprint.get(getTodoFingerprint(remote));
+      const byFingerprint = fingerprintMatch && !fingerprintMatch.deletedAt ? fingerprintMatch : null;
       const local = byUuid || byFingerprint;
 
       if (!local) {
@@ -1380,6 +1395,12 @@ function getTodoFingerprint(todo) {
 }
 
 function mergeTodoForPull(local, remote) {
+  // The same deleted identity must not be re-imported as an active task.
+  // Keep its tombstone for the subsequent upload, even if the cloud copy
+  // carries a newer timestamp from an old device.
+  if (local.deletedAt && local.uuid && local.uuid === remote.uuid) {
+    return remote.deletedAt ? { ...local } : { ...local, updatedAt: new Date().toISOString() };
+  }
   const localUpdatedAt = local.updatedAt || '';
   const remoteUpdatedAt = remote.updatedAt || '';
   const remoteNewer = remoteUpdatedAt > localUpdatedAt;
@@ -1552,7 +1573,10 @@ function dedupeTodosForPush(todos) {
       continue;
     }
     const existing = byUuid.get(todo.uuid);
-    if (!existing || compareTodoForDedupe(todo, existing) < 0) {
+    if (!existing ||
+        (todo.deletedAt && !existing.deletedAt) ||
+        (Boolean(todo.deletedAt) === Boolean(existing.deletedAt) &&
+          compareTodoForDedupe(todo, existing) < 0)) {
       byUuid.set(todo.uuid, todo);
     }
   }
