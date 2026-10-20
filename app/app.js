@@ -1615,8 +1615,8 @@ addBtn.onclick = async () => {
     queued: false,
     queueOrder: null,
     sortOrder: getNextPendingSortOrder(),
-    quadrant: todoQuadrant && TODO_QUADRANTS.includes(todoQuadrant.value)
-      ? todoQuadrant.value
+    quadrant: todoQuadrant && TODO_QUADRANTS.includes(todoQuadrant.querySelector('input:checked')?.value)
+      ? todoQuadrant.querySelector('input:checked').value
       : DEFAULT_TODO_QUADRANT,
     quadrantOrder: 0,
     createdAt: now,
@@ -4498,7 +4498,7 @@ if ('serviceWorker' in navigator) {
     location.reload();
   };
 
-  navigator.serviceWorker.register('./sw.js?v=20261016-task-tombstone-2', { updateViaCache: 'none' }).then(reg => {
+  navigator.serviceWorker.register('./sw.js?v=20261020-quadrant-tags-1', { updateViaCache: 'none' }).then(reg => {
     swRegistration = reg;
     reg.update();
     if (reg.waiting) promptForUpdate();

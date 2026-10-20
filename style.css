@@ -608,7 +608,6 @@ section {
   margin-bottom: 20px;
 }
 
-#todo-quadrant,
 #todo-input {
   width: 100%;
   min-width: 0;
@@ -624,21 +623,68 @@ section {
 }
 
 #todo-quadrant {
-  width: 150px;
-  flex: 0 0 150px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  flex: 1 1 440px;
+  min-width: 0;
+}
+
+.quadrant-tag {
+  position: relative;
+  cursor: pointer;
+}
+
+.quadrant-tag input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.quadrant-tag span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.quadrant-tag:hover span {
+  border-color: var(--quadrant-color);
+}
+
+.quadrant-tag input:checked + span {
+  border-color: var(--quadrant-color);
+  background: color-mix(in srgb, var(--quadrant-color) 22%, var(--input));
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--quadrant-color);
+}
+
+.quadrant-tag input:focus-visible + span {
+  outline: 2px solid var(--quadrant-color);
+  outline-offset: 2px;
 }
 
 .todo-quadrant-row {
   justify-content: flex-start;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .todo-intention-note {
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
-  margin-left: 10px;
-  margin-top: 18px;
-  align-self: flex-start;
+  margin: 0;
   font-size: 12px;
   line-height: 1.4;
   color: #7a766f;
@@ -1574,6 +1620,10 @@ section {
   #todo-quadrant {
     flex: 1 1 100%;
     width: auto;
+  }
+
+  .quadrant-tag span {
+    font-size: clamp(9px, 2.5vw, 13px);
   }
 
   .todo-intention-note {

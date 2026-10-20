@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PWA Todo</title>
-  <link rel="stylesheet" href="style.css?v=20261016-remove-timeline-4" />
+  <link rel="stylesheet" href="style.css?v=20261020-quadrant-tags-1" />
   <link rel="icon" type="image/svg+xml" href="app/icon.svg" />
   <link rel="manifest" href="app/manifest.json?v=20260330-problem-review-1" />
 </head>
@@ -94,12 +94,12 @@
       <button id="recurrence-open" type="button" class="header-action">重复规则</button>
     </div>
     <div class="input-row todo-quadrant-row">
-      <select id="todo-quadrant" aria-label="选择任务象限">
-        <option value="q1" selected>重要且紧急</option>
-        <option value="q2">重要不紧急</option>
-        <option value="q3">紧急不重要</option>
-        <option value="q4">不重要不紧急</option>
-      </select>
+      <div id="todo-quadrant" role="group" aria-label="选择任务象限">
+        <label class="quadrant-tag quadrant-q1"><input type="radio" name="todo-quadrant" value="q1" checked /><span>重要且紧急</span></label>
+        <label class="quadrant-tag quadrant-q2"><input type="radio" name="todo-quadrant" value="q2" /><span>重要不紧急</span></label>
+        <label class="quadrant-tag quadrant-q3"><input type="radio" name="todo-quadrant" value="q3" /><span>紧急不重要</span></label>
+        <label class="quadrant-tag quadrant-q4"><input type="radio" name="todo-quadrant" value="q4" /><span>不重要不紧急</span></label>
+      </div>
       <div class="todo-intention-note">只要我能继续做下一步，就不允许自己继续深入理解</div>
     </div>
     <div class="input-row">
@@ -292,7 +292,7 @@
     <h2>已完成事项</h2>
     <ul id="completed-list"></ul>
   </section>
-  <script type="module" src="app/app.js?v=20261016-task-tombstone-2"></script>
+  <script type="module" src="app/app.js?v=20261020-quadrant-tags-1"></script>
   </div>
 
   <div id="bgm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
